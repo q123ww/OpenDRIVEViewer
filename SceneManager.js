@@ -107,6 +107,7 @@ export class SceneManager {
         if (this.renderer && this.renderer.domElement) {
             this.renderer.domElement.addEventListener('mousemove', this.onMouseMove.bind(this), false);
             this.renderer.domElement.addEventListener('mouseleave', this.onMouseLeave.bind(this), false);
+            this.renderer.domElement.addEventListener('click', this.onMouseClick.bind(this), false);
             this.logger.log("SceneManager: Mouse event listeners added to renderer.domElement.");
         } else {
             this.logger.error("SceneManager: renderer.domElement not available for adding mouse listeners.");
@@ -127,7 +128,7 @@ export class SceneManager {
         this.logger.log("SceneManager: Initializing scene...");
         this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.renderer.setClearColor(0x000022); // 파란색이 살짝 도는 검정색 배경
+        this.renderer.setClearColor(0x202124, 1); // 파란색이 살짝 도는 검정색 배경
 
         // 초기 카메라 위치 및 방향 설정 (Bird's Eye View)
         const egoPosition = new THREE.Vector3(0, 0, 0); // Ego 차량 위치 (가정)
@@ -229,6 +230,7 @@ export class SceneManager {
         }
 
         // roadMesh.name = `road_${roadId}`; // OpenDriveViewer에서 이미 그룹에 이름을 설정해서 전달함 (예: road_ref_group_ID, lane_group_ID)
+        roadMesh.visible = this.referenceLinesVisible; // 기본 숨김 여부 적용
         this.roadContainer.add(roadMesh);
         this.logger.log(`SceneManager: Mesh ${roadMesh.name} (ID: ${roadId}) ADDED to roadContainer. roadContainer children: ${this.roadContainer.children.length}. Mesh visibility: ${roadMesh.visible}`);
     
@@ -335,19 +337,61 @@ export class SceneManager {
                         `Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`,
                         `Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
 
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-        cameraZ *= 1.5; // 약간의 여백을 줌
+        const padding = 1.1; // 10% 여백
 
-        this.camera.position.set(center.x, center.y + maxDim * 0.5, center.z + cameraZ); // Y축을 약간 높여서 내려다보는 뷰
+        // 카메라 위치: 상공에서 내려다보도록 Y축 위로 이동, Z는 center.z 유지
+        const aboveHeight = Math.max(size.x, size.z) * 0.5 + 10; // 네트워크 크기에 비례한 높이
+        this.camera.position.set(center.x, aboveHeight, center.z);
         this.camera.lookAt(center);
+
+        // Orthographic 카메라 zoom 조정
+        if (this.camera instanceof THREE.OrthographicCamera) {
+            const viewWidth = this.camera.right - this.camera.left;
+            const viewHeight = this.camera.top - this.camera.bottom;
+            const requiredWidth = size.x * padding;
+            const requiredHeight = size.z * padding; // Y 대신 Z 축 사용
+
+            const zoomX = viewWidth / requiredWidth;
+            const zoomY = viewHeight / requiredHeight;
+            let newZoom = Math.min(zoomX, zoomY);
+            const MIN_ZOOM_CAP = 0.001;
+            if (newZoom < MIN_ZOOM_CAP) newZoom = MIN_ZOOM_CAP; // 안전 하한
+
+            this.camera.zoom = newZoom;
+            // OrbitControls의 zoom 한계도 동적으로 업데이트해 갑작스러운 점프 방지
+            if (this.controls) {
+                this.controls.minZoom = newZoom * 0.5; // 조금 더 넓게 볼 수 있도록
+                this.controls.maxZoom = newZoom * 100; // 충분히 확대 가능
+            }
+            this.camera.updateProjectionMatrix();
+        }
 
         if (this.controls) {
             this.controls.target.copy(center);
             this.controls.update();
         }
-        this.logger.log("SceneManager: Camera adjusted to fit all roads.");
+
+        // 그리드 크기를 네트워크에 맞게 재설정
+        const gridSpacing = 100; // 100 m 간격
+        const gridSize = Math.ceil(Math.max(size.x, size.z) / gridSpacing) * gridSpacing;
+        const divisions = Math.min(200, gridSize / gridSpacing); // 최대 200 division
+        if (this.gridHelper) {
+            this.scene.remove(this.gridHelper);
+        }
+        this.gridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0xcccccc);
+        // 더 은은하게: 투명도 낮추기
+        if (Array.isArray(this.gridHelper.material)) {
+            this.gridHelper.material.forEach(mat => { mat.transparent = true; mat.opacity = 0.15; mat.depthWrite = false; });
+        } else {
+            this.gridHelper.material.transparent = true;
+            this.gridHelper.material.opacity = 0.15;
+            this.gridHelper.material.depthWrite = false;
+        }
+        this.gridHelper.position.set(center.x, 0, center.z);
+        this.gridHelper.visible = true;
+        this.scene.add(this.gridHelper);
+
+        this.logger.log("SceneManager: Camera adjusted to fit all roads (Orthographic mode).");
     }
 
     focusOnRoadObject(objectName) {
@@ -454,14 +498,22 @@ export class SceneManager {
                         // TODO: 다른 타입의 재질에 대한 하이라이트 처리 추가 가능
                     }
 
-                    let tooltipText = `Road ID: ${this.intersectedObject.userData.roadId}`;
+                    const hitPt = intersects[0].point;
+                    const odrX = hitPt.x.toFixed(1);
+                    const odrY = (-hitPt.z).toFixed(1);
+
+                    let tooltipText = `Road ${this.intersectedObject.userData.roadId}`;
                     if (this.intersectedObject.userData.laneId !== undefined) {
-                        tooltipText += `, Lane ID: ${this.intersectedObject.userData.laneId}`;
+                        tooltipText += ` | Lane ${this.intersectedObject.userData.laneId}`;
                     }
-                    if (this.intersectedObject.userData.type) {
-                        tooltipText += ` (${this.intersectedObject.userData.type})`;
+                    if (this.intersectedObject.userData.length !== undefined) {
+                        tooltipText += ` | Len ${this.intersectedObject.userData.length.toFixed(1)}m`;
                     }
-                    // this.logger.log("Mouse Over:", tooltipText, "at", event.clientX, event.clientY);
+                    if (this.intersectedObject.userData.laneType) {
+                        tooltipText += ` (${this.intersectedObject.userData.laneType})`;
+                    }
+                    tooltipText += `\nX:${odrX}m Y:${odrY}m`;
+
                     if (this.uiManager) {
                         // Pass basic tooltip text and the full userData for more details
                         this.uiManager.showTooltip(tooltipText, event.clientX + 10, event.clientY + 10, this.intersectedObject.userData);
@@ -701,6 +753,13 @@ export class SceneManager {
         });
     }
 
+    toggleReferenceLines() {
+        // 현재 가시성 상태를 반전하여 적용
+        const newState = !this.referenceLinesVisible;
+        this.setReferenceLinesVisible(newState);
+        this.logger.log(`SceneManager: Reference lines visibility toggled to ${newState}`);
+    }
+
     update() {
         // ... existing code ...
         
@@ -709,6 +768,9 @@ export class SceneManager {
         if (now - this.lastLodUpdate > this.lodUpdateInterval) {
             this.updateLod();
             this.lastLodUpdate = now;
+
+            // 시야 밖 객체 숨김 처리
+            this.updateRoadVisibility();
         }
     }
 
@@ -725,23 +787,98 @@ export class SceneManager {
         });
     }
 
+    updateRoadVisibility() {
+        if (!this.camera || !this.roadContainer) return;
+
+        // 카메라 프러스텀 계산
+        this.camera.updateMatrix();
+        this.camera.updateMatrixWorld();
+        const frustum = new THREE.Frustum();
+        const projScreenMatrix = new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+        frustum.setFromProjectionMatrix(projScreenMatrix);
+
+        let visibleCount = 0;
+        this.roadContainer.children.forEach(child => {
+            if (!child.userData || child.userData.type !== 'roadLine') {
+                // lane groups 포함 기타는 그대로
+                return;
+            }
+
+            // boundingSphere 계산 (once and cache)
+            if (!child.geometry.boundingSphere) {
+                child.geometry.computeBoundingSphere();
+            }
+            const sphere = child.geometry.boundingSphere.clone();
+            sphere.applyMatrix4(child.matrixWorld);
+
+            const isIn = frustum.intersectsSphere(sphere);
+            child.visible = isIn;
+            if (isIn) visibleCount++;
+        });
+        this.logger.log(`SceneManager: updateRoadVisibility visible road lines: ${visibleCount}/${this.roadContainer.children.length}`);
+    }
+
     async loadOpenDrive(openDriveData) {
         // ... existing code ...
         for (const road of openDriveData.roads) {
-            const roadGroup = new THREE.Group();
-            roadGroup.userData = { type: 'road', id: road.id };
-            
-            for (const segment of road.planView.geometries) {
-                const mesh = await this.geometryBuilder.createRoadSegmentMesh(
-                    road,
-                    segment,
-                    this.camera.position.distanceTo(roadGroup.position)
-                );
-                roadGroup.add(mesh);
+            const cameraDistance = this.camera.position.length(); // 임시: 원점 기준 거리
+            const roadMesh = this.geometryBuilder.createRoadSegmentMesh(road, cameraDistance);
+            if (roadMesh) {
+                // addRoad 메서드에서 visibility 설정을 일관되게 처리하므로 여기서는 직접 추가하지 않고 addRoad를 사용합니다.
+                this.addRoad(road.id, roadMesh);
             }
-            
-            this.scene.add(roadGroup);
+
+            // lane boundaries
+            const surfaceMesh = this.geometryBuilder.buildRoadSurfaceMesh(road, cameraDistance);
+            if (surfaceMesh) {
+                this.roadContainer.add(surfaceMesh);
+            }
+
+            const laneGroup = this.geometryBuilder.buildLaneMeshes(road, cameraDistance);
+            if (laneGroup) {
+                this.roadContainer.add(laneGroup);
+            }
+
+            const markGroup = this.geometryBuilder.buildRoadMarkMeshes(road, cameraDistance);
+            if (markGroup) this.roadContainer.add(markGroup);
         }
         // ... existing code ...
+
+        // 모든 도로 추가 후 카메라 프레이밍
+        this.updateCameraToFitAllRoads();
+    }
+
+    onMouseClick(event) {
+        if (!this.renderer || !this.camera || !this.roadContainer) return;
+
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const mouseNDC = new THREE.Vector2(
+            ((event.clientX - rect.left) / rect.width) * 2 - 1,
+            -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+
+        this.raycaster.setFromCamera(mouseNDC, this.camera);
+        const intersects = this.raycaster.intersectObjects(this.roadContainer.children, true);
+        if (intersects.length === 0) return;
+
+        let obj = intersects[0].object;
+        // parent traversal to find roadLine
+        while (obj && (!obj.userData || !obj.userData.roadId)) {
+            obj = obj.parent;
+        }
+        if (obj && obj.userData && obj.userData.roadId) {
+            if (this.uiManager && typeof this.uiManager.showRoadInfo === 'function') {
+                const clickPt = intersects[0].point.clone();
+                const odrX = clickPt.x;
+                const odrY = -clickPt.z;
+                this.uiManager.showRoadInfo({
+                    roadId: obj.userData.roadId,
+                    length: obj.userData.length,
+                    laneId: obj.userData.laneId,
+                    x: odrX,
+                    y: odrY
+                });
+            }
+        }
     }
 } 

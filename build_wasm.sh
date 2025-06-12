@@ -40,6 +40,7 @@ CPP_SOURCES=" \
 INCLUDE_PATHS=" \
     -I./libOpenDRIVE-main/include \
     -I./libOpenDRIVE-main/pugixml/src \
+    -I./extern/json/single_include \
     "
 
 echo "Starting WASM build..."

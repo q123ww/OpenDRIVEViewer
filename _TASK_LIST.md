@@ -1,4 +1,7 @@
 # OpenDRIVE Web Viewer 개선 작업 목록 (Danaozhong/odrviewer 참조)
+> 📑 **관련 문서**: 프로젝트 결정 근거와 상세 분석은 [analysis.md](analysis.md) 를 참고하세요.
+> 이 파일은 '무엇을 할 것인가(TODO / 일정 / 체크리스트)'를 집중적으로 다룹니다.
+
 - 작업경로 : /Hexagon/OpenDRIVEViewer
 
 ## Phase 1: 코드 구조 분석 및 핵심 지오메트리 처리 로직 파악 (Python 코드 이해 단계)
@@ -115,17 +118,21 @@
         - `OpenDriveViewer.js` (`MainController`): `loadFile` 함수 내 데이터 흐름 추적을 위해 `file.text()` 호출 전후, `sceneManager.clearScene()` 호출 전후, `uiManager.clearRoadList()` 호출 전후 로그 추가. `sceneManager.clearScene` 메소드 유효성 검사 로그 추가.
         - `SceneManager.js`: `clearScene()` 함수 내부 (씬 객체 탐색 및 제거 과정) 상세 로그 추가. `roadGroup` 및 `roadObjectsGroup` 변수명 일관성 확인.
         - `UIManager.js`: `clearRoadList()` 함수 내부 (DOM 요소 탐색, `innerHTML` 초기화 시도 및 결과) 상세 로그 추가. 생성자, `initUI`, `showLoading`, `showError`, `populateRoadList` 등 주요 UI 함수에도 로그 추가 및 로직 개선.
-    - **최근 디버깅 상황 (2024-07-09 이후)**:
+    - **최근 디버깅 상황 (2024-07-17)**:
         - **모듈 로딩 문제 해결**: `index.html`에 `importmap` 추가, 모든 로컬 `.js` 파일 `<script type="module">` 사용, 각 모듈 `export default ClassName;` 추가, `OpenDriveViewer.js`에 의존성 `import` 명시, `GeometryBuilder.js`에 `import * as THREE from 'three';` 추가, `SceneManager` 생성자에서 캔버스 동적 생성으로 `_canvas.getContext` 오류 해결. `OpenDriveViewer.js` 생성자 오류 처리 개선으로 이중 팝업 해결.
         - **UI 상호작용 디버깅 (완료)**: 체크박스 기능 관련 `SceneManager` 메소드 (`setReferenceLinesVisible` 등) 호출 오류 해결. `OpenDriveViewer.js` 내 `UIManager` 생성자 인자 전달 오류 수정, `handleRoadFocus` 콜백 바인딩 오류 수정 및 JavaScript 모듈 로딩 순서 조정을 통해 정상 작동 확인.
         - **UI 레이아웃 변경 (2024-07-17)**: "Display Options" 섹션 제거, "Roads" 체크박스 삭제, "Grid" 체크박스를 "Lane Types" 섹션으로 이동. 관련 HTML, UIManager, OpenDriveViewer 스크립트 수정.
         - **현재 디버깅 이슈 (2024-07-17 PAUSED)**: "Lane Types" (referenceLine, driving, sidewalk) 체크박스 클릭 시 `change` 이벤트가 발생하지 않아 관련 기능이 동작하지 않는 문제. `UIManager.js`의 `initLaneTypeCheckboxes`에서 이벤트 리스너는 성공적으로 등록되는 것으로 로그상 확인되나, 실제 이벤트 콜백은 트리거되지 않음. (상세 디버깅 내용은 `UIManager.js` 내 주석 참고)
+        - **폭 계산 오류 해결 (2025-06-12)**  
+            - `GeometryBuilder.getLaneWidthAt`에서 폭 세그먼트가 존재하지 않는 차로의 기본 폭을 **3.5 m → 0 m**로 변경.  
+            - 단일 차로 폭이 **20 m**를 초과할 경우 경고를 출력하고 20 m로 클램핑하도록 가드 레일 추가.  
+            - Road 29, 121 등에서 반복되던 `Abnormal width` 경고 다수 제거, 누적 폭 과다로 인한 도로 메시 왜곡 현상 해소.
 
 ### 3.2. UI/UX 개선 (지속)
 - [ ] **프롬프트**: `odrviewer.io` 사이트의 UI/UX를 참고하여 현재 `index.html` 및 `OpenDriveViewer.js`의 사용자 인터페이스 관련 기능을 개선/확장해 주세요. 특히, Phase 2에서 렌더링 기능이 안정화됨에 따라 다음 항목들을 고려할 수 있습니다:
     1.  [x] 로드된 도로 목록을 좌측 패널에 표시하고, 선택 시 해당 도로로 카메라 포커스 기능 (`focusOnRoad` 활용).
     2.  [ ] 특정 도로 세그먼트 또는 차선 클릭 시 정보 표시 기능 (기초).
-    3.  [~] 렌더링 옵션 제어:
+    3.  [x] 렌더링 옵션 제어:
         - UI 구성: "Display Options" 섹션 제거, "Roads" 토글 삭제, "Grid" 토글을 "Lane Types" 섹션으로 이동 완료 (2024-07-17).
         - 기능 상태:
             - "Lane Types" (참조선, Driving, Sidewalk 등): 체크박스 `change` 이벤트 미발생 이슈로 관련 기능 디버깅 중 (PAUSED, 상세 내용은 3.1절 및 UIManager.js 주석 참고).
@@ -152,7 +159,7 @@
     - **세부 개선 항목 (우선순위 순)**:
         - [ ] **3.4.1 특정 도로 로드 실패 문제 디버깅 완료 (진행 중)**
             - **목표**: 모든 도로 데이터가 정확히 파싱되고 기본적인 지오메트리 생성이 가능하도록 보장합니다. Worker의 정규식 파싱 및 메인 스레드의 상세 파싱, 지오메트리 빌더 오류를 해결합니다.
-        - [ ] **3.4.2 선택적 렌더링 도입 (참조선)**
+        - [x] **3.4.2 선택적 렌더링 도입 (참조선)**
             - **프롬프트**: 기본적으로 참조선을 렌더링하지 않고, UI 토글을 통해 사용자가 원할 때만 참조선을 로드/렌더링하도록 `UIManager.js`, `OpenDriveViewer.js`, `SceneManager.js`, `GeometryBuilder.js`를 수정합니다.
             - **예상 결과물**: 초기 렌더링 객체 수 감소로 인한 즉각적인 FPS 향상 및 로딩 시간 단축.
         - [ ] **3.4.3 순차 로딩 (`loadRemainingRoadsSequentially`) 시 시간 분할(Time Slicing) 강화**
@@ -200,4 +207,35 @@
 
 ### 4.4. 전체 파이프라인 통합 및 최적화 (예정)
 - **선행조건**: 4.2 실제 파싱 JSON 구조 확정.
+
+### 4.2.1 진행 상황 업데이트 (2025-06-12)
+- **스텁 JSON 파서 오류 해결 시도**: `wasm_parser_wrapper.cpp`의 누락된 JSON 키 인용 문제 수정 → 브라우저 JSON 파싱 오류 해결.
+- **그러나**: pugixml 기반 스텁은 지오메트리·차선 정보 축약으로 실전 사용 어려움 확인.
+- **결정**: libOpenDRIVE 의 `odr::OpenDriveMap` 정식 파서를 WASM 으로 빌드해 사용하기로 재전환.
+    - 입력 XODR 문자열을 **MEMFS `/tmp/xodr_*.xodr`** 에 저장한 후 `OpenDriveMap` 생성자를 호출.
+    - nlohmann::json 으로 JS 친화 경량 스키마 직렬화.
+- **설계 스케치**: `parseOpenDrive(xodrString) -> string(JSON)`; 내부 함수 `writeMemFile`, `buildOpenDriveMap`, `mapToJson` 로 SRP 분리.
+
+#### 내일 예정 작업 (2025-06-13)
+1. **환경 정비**
+    - [ ] `external/libOpenDRIVE` 서브모듈 init & fetch.
+    - [ ] `nlohmann/json` 헤더 추가 (`external/json`).
+2. **WASM 래퍼 구현** (`src/opendrive_wasm.cpp`)
+    - [ ] `writeMemFile` 구현 (MEMFS 저장).
+    - [ ] `parseOpenDrive` 구현 (`OpenDriveMap` 호출 → json 직렬화).
+    - [ ] `mapRoad` / `mapLaneSection` 등 헬퍼 함수 설계.
+3. **빌드 스크립트 업데이트** (`build_wasm.sh`)
+    - [ ] `USE_STD_FILESYSTEM=1` 플래그 추가.
+    - [ ] 필요 소스 제외/포함 목록 조정.
+4. **JS 연동**
+    - [ ] `OpenDriveViewer.js` 에 `parseOpenDrive` 호출 & 로딩 UI.
+    - [ ] 새 JSON 스키마에 맞춰 `SceneManager.loadFromJson` 작성.
+5. **간단 테스트 케이스**
+    - [ ] `Crossing8Course.xodr` 로딩 → 도로 수/길이 검증.
+    - [ ] console.assert(JSON.parse(json).roads.length > 0).
+6. **문서화**
+    - [ ] README 빌드 지침 업데이트.
+
+> *커서 룰 – SRP, 독립적 배포 가능성, 테스트 용이성, 가독성 고려하여 단계별로 진행*
+
 --- 

@@ -2,7 +2,7 @@ import { SceneManager } from './SceneManager.js';
 import { UIManager } from './UIManager.js';
 import { GeometryBuilder } from './GeometryBuilder.js';
 import { DebugLogger } from './DebugLogger.js';
-import OpenDriveWasmModule from './OpenDriveWasm.js';
+import OpenDriveWasmModule from './OpenDriveWasm.js?v=20250613';
 // THREE는 SceneManager 등에서 import 하므로 여기서는 직접 import 필요 없을 수 있음
 // import * as THREE from 'three'; 
 
@@ -14,15 +14,27 @@ export class OpenDriveViewer {
         // UI 요소 초기화
         this.uiManager = new UIManager(uiElements, this.logger);
         
-        // 씬 매니저 초기화
-        this.sceneManager = new SceneManager(canvasId, this.logger);
+        // 씬 매니저 초기화 (UIManager 전달)
+        this.sceneManager = new SceneManager(canvasId, this.logger, this.uiManager);
+        this.sceneManager.initScene();
+        this.sceneManager.startAnimationLoop();
         
         // 지오메트리 빌더 초기화
         this.geometryBuilder = new GeometryBuilder(this.logger);
+        // SceneManager와 연결
+        this.sceneManager.geometryBuilder = this.geometryBuilder;
         
         // WASM 초기화
         this.wasm = null;
-        OpenDriveWasmModule().then(mod => {
+        const wasmOpts = {
+            locateFile: (path, prefix) => {
+                if (path.endsWith('.wasm')) {
+                    return `${path}?v=20250613`;
+                }
+                return prefix + path;
+            }
+        };
+        OpenDriveWasmModule(wasmOpts).then(mod => {
             this.wasm = mod;
             this.logger.log('WASM module ready');
         }).catch(err => {
@@ -74,8 +86,15 @@ export class OpenDriveViewer {
             const resultJson = this.wasm.parseXodr(text);
             const parsedData = JSON.parse(resultJson);
 
-            // TODO: Replace with actual parsing result structure
-            await this.sceneManager.loadOpenDrive(parsedData);
+            // 지오메트리 데이터 포함 시 씬에 로드
+            if (parsedData.roads && parsedData.roads.length > 0) {
+                await this.sceneManager.loadOpenDrive(parsedData);
+            }
+
+            // Populate road list if roads array present
+            if (parsedData.roads) {
+                this.uiManager.populateRoadList(parsedData.roads.map(r=>({id:r.id,name:`Road ${r.id}`,length:r.length,status:'basic'})));
+            }
 
             this.uiManager.updateLoadingProgress(100);
             this.uiManager.showLoading(false);
@@ -88,9 +107,9 @@ export class OpenDriveViewer {
 
     async loadDefaultFile() {
         try {
-            const response = await fetch('./Crossing8Course.xodr');
+            const response = await fetch('./Germany_2018.xodr');
             const text = await response.text();
-            const file = new File([text], 'Crossing8Course.xodr', { type: 'text/xml' });
+            const file = new File([text], 'Germany_2018.xodr', { type: 'text/xml' });
             await this.loadFile(file);
         } catch (error) {
             this.uiManager.showError('Error loading default file: ' + error.message);
@@ -331,8 +350,7 @@ export class OpenDriveViewer {
     }
 
     handleLaneTypeFilterChange(selectedTypes) {
-        console.log("[OpenDriveViewer] handleLaneTypeFilterChange CALLED with selectedTypes:", selectedTypes); // 직접 console.log 추가
-        this.logger.log("MainController: Lane type filter changed. Selected types:", selectedTypes); // 기존 로거 사용
+        this.logger.log("MainController: Lane type filter changed. Selected types:", selectedTypes);
         this.activeLaneTypes = selectedTypes;
 
         if (!this.sceneManager) {

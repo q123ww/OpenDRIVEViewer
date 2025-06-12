@@ -1,4 +1,6 @@
 # OpenDRIVE Viewer 개선을 위한 `Danaozhong/odrviewer` 분석 결과 (중간 요약)
+> 📋 **실행 가능한 할 일 목록**: [_TASK_LIST.md](./_TASK_LIST.md)에서 확인할 수 있습니다.
+> 이 파일은 ‘왜 / 어떻게 할 것인가(분석, 결정 근거, 기술 메모)’를 다룹니다.
 
 ## Phase 1: 코드 구조 분석 및 핵심 지오메트리 처리 로직 파악 (완료)
 *이 단계의 분석 결과는 아래 각 절에 요약되어 있으며, `Danaozhong/odrviewer` Python 코드의 주요 로직을 이해하는 데 중점을 두었습니다.*
@@ -65,6 +67,10 @@
     - **현재 디버깅 이슈 (2024-07-17 PAUSED)**: 위 UI 변경 후 "Lane Types" (referenceLine, driving, sidewalk) 체크박스에 대한 `change` 이벤트가 발생하지 않는 문제 확인. `UIManager.js`의 `initLaneTypeCheckboxes`에서 이벤트 리스너 자체는 성공적으로 등록되는 것으로 로그상 확인되나, 실제 이벤트 콜백 함수가 트리거되지 않아 해당 차선 유형들의 가시성 토글 기능이 작동하지 않음. (상세 디버깅 내용은 `UIManager.js` 내 주석 참고) 
     - **현재 상태**: 주요 기능은 동작하나, 대용량 파일(`Germany_2018.xodr`) 로드 시 심각한 성능 저하 문제 발생.
     - **UI 상호작용**: 도로 목록 표시 및 선택 시 포커싱 기능, 마우스 오버 시 도로/차선 정보 툴팁 표시 기능 구현 완료.
+    - **폭 계산 오류 수정 (2025-06-12)**: 대용량 XODR 파일(`Germany_2018.xodr`) 테스트 중 `GeometryBuilder.js`의 `getLaneWidthAt`에서 누적 폭이 비정상적으로 커져 콘솔에 `Abnormal width` 경고가 대량 발생하고 도로 표면 메시가 왜곡되는 문제를 발견.  
+        - **원인**: (1) 폭 세그먼트가 존재하지 않는 차로에 대해 기본 폭 3.5 m를 적용하여 실제로 존재하지 않는 차로 폭이 누적됨. (2) 폭 다항식이 유효 범위를 벗어날 때 100 m 이상 값이 반환되는 경우가 있었음.  
+        - **조치**: ① 폭 세그먼트가 비어있을 때 기본 값을 0 m로 변경. ② 단일 차로 폭이 20 m를 초과하면 `warn` 로그를 남기고 20 m로 클램핑하는 가드 레일 도입.  
+        - **결과**: Road 29, 121 등에서 발생하던 `Abnormal width` 로그가 사라졌으며, 곡선·가변폭 구간의 표면 및 차선 메시 위치가 정상화됨.
 
 ### 3.2. UI/UX 개선 (부분 진행)
 - **진행 상황**: 
@@ -115,5 +121,38 @@
 - `wasm_parser_wrapper.cpp` 를 실제 **`odr::OpenDriveMap` + `nlohmann::json`** 직렬화로 교체.
 - JSON 스키마 설계 → Three.js 파이프라인 연결 (`SceneManager.loadOpenDrive`).
 - 성능·메모리 측정, 파서 최적화(O2, threading?)
+
+## 4.2.1 2025-06-12 진행 내역 요약
+오늘은 WASM 파서 스텁(`pugixml`)의 JSON 누락 따옴표 오류를 해결했으나,
+스텁 구조 한계(지오메트리·차선 정보 부족)로 **libOpenDRIVE `OpenDriveMap` 기반 파서**를 도입하기로 회귀 결정하였습니다.
+
+### 결정 사항
+1. **MEMFS + OpenDriveMap** 방식 채택
+   - 입력 XODR 문자열을 `/tmp/xodr_*.xodr` 로 저장 후 `odr::OpenDriveMap` 생성자 호출.
+   - nlohmann::json 으로 JS 친화 경량 스키마 직렬화.
+2. **WASM 래퍼 설계**
+   - `writeMemFile`, `mapRoad()`, `parseOpenDrive()` 함수로 SRP 분리.
+   - `parseOpenDrive` → JSON 문자열 반환, JS 에서 `JSON.parse()` 로 사용.
+3. **빌드 플래그**
+   - `-s USE_STD_FILESYSTEM=1` 로 `std::ofstream` 사용.
+   - `ALLOW_MEMORY_GROWTH`, `MODULARIZE`, `EXPORT_ES6` 유지.
+
+## 내일(2025-06-13) 작업 계획
+1. **저장소 준비**
+   - libOpenDRIVE 서브모듈 init & 업데이트.
+   - nlohmann/json 헤더 추가.
+2. **WASM 래퍼 구현**
+   - `src/opendrive_wasm.cpp` 작성 및 바인딩.
+3. **빌드 스크립트 수정** (`build_wasm.sh`)
+   - 필요 소스·플래그 반영, 불필요 소스 제외.
+4. **JavaScript 통합**
+   - `OpenDriveViewer.js` 에서 `parseOpenDrive` 호출.
+   - `SceneManager` 새 JSON 스키마 매핑 함수 작성.
+5. **테스트 & 검증**
+   - `Crossing8Course.xodr` 로드 → 도로 수, 길이, 차선, refLine 데이터 확인.
+6. **문서 업데이트**
+   - README 빌드 지침에 emsdk, 서브모듈, 빌드 방법 명시.
+
+> 커서 룰 – SRP, 테스트 용이성, 독립적 배포 가능성, 가독성 원칙을 준수하여 단계별 작업을 진행합니다.
 
 ---

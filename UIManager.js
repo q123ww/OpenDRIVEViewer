@@ -58,4 +58,49 @@ export class UIManager {
             roadElement.querySelector('.road-status').textContent = status;
         }
     }
+
+    // 간단한 도로 정보 표시 (추후 패널 UI로 개선 가능)
+    showRoadInfo(roadData) {
+        const { roadId, length, laneId, x, y } = roadData;
+        let msg = `Road ID: ${roadId}`;
+        if (length !== undefined) msg += ` | Len: ${length.toFixed(1)} m`;
+        if (laneId !== undefined) msg += ` | Lane: ${laneId}`;
+        if (x !== undefined && y !== undefined) msg += `\nX: ${x.toFixed(1)} m, Y: ${y.toFixed(1)} m`;
+        // center screen
+        const cx = window.innerWidth / 2;
+        const cy = 20;
+        this.showTooltip(msg, cx, cy);
+    }
+
+    // Tooltip 모양 간단 구현 (optional used by SceneManager)
+    showTooltip(text, x, y) {
+        if (!this.tooltipEl) {
+            this.tooltipEl = document.createElement('div');
+            this.tooltipEl.style.position = 'fixed';
+            this.tooltipEl.style.padding = '4px 8px';
+            this.tooltipEl.style.background = 'rgba(0,0,0,0.7)';
+            this.tooltipEl.style.color = '#fff';
+            this.tooltipEl.style.borderRadius = '4px';
+            this.tooltipEl.style.pointerEvents = 'none';
+            this.tooltipEl.style.zIndex = '1000';
+            document.body.appendChild(this.tooltipEl);
+        }
+        this.tooltipEl.textContent = text;
+        this.tooltipEl.style.left = `${x}px`;
+        this.tooltipEl.style.top = `${y}px`;
+        this.tooltipEl.style.display = 'block';
+    }
+
+    updateTooltipPosition(x, y) {
+        if (this.tooltipEl) {
+            this.tooltipEl.style.left = `${x}px`;
+            this.tooltipEl.style.top = `${y}px`;
+        }
+    }
+
+    hideTooltip() {
+        if (this.tooltipEl) {
+            this.tooltipEl.style.display = 'none';
+        }
+    }
 } 
