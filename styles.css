@@ -1,0 +1,150 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    color: #333;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+#toolbar {
+    width: 300px;
+    background-color: #fff;
+    padding: 20px;
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#viewer {
+    flex: 1;
+    position: relative;
+}
+
+#roadList {
+    margin-top: 20px;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+
+.road-item {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.road-name {
+    font-weight: bold;
+}
+
+.road-length {
+    color: #666;
+}
+
+.road-status {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8em;
+}
+
+.road-status.basic {
+    background-color: #e0e0e0;
+}
+
+.road-status.loading {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.road-status.loaded {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.road-status.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.loading-indicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.loading-text {
+    font-size: 1.2em;
+    color: #333;
+}
+
+.loading-progress {
+    font-size: 0.9em;
+    color: #666;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+button {
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+input[type="file"] {
+    display: none;
+}
+
+#loadDefaultBtn {
+    background-color: #28a745;
+}
+
+#loadDefaultBtn:hover {
+    background-color: #218838;
+}
+
+#toggleReferenceLinesBtn {
+    background-color: #6c757d;
+}
+
+#toggleReferenceLinesBtn:hover {
+    background-color: #5a6268;
+} 

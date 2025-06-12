@@ -1,0 +1,3 @@
+[submodule "libOpenDRIVE-main/pugixml"]
+	path = libOpenDRIVE-main/pugixml
+	url = https://github.com/zeux/pugixml.git
