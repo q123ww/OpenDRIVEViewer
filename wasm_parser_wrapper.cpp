@@ -80,6 +80,39 @@ std::string parseXodr(const std::string& xodrContent)
         jroad["id"] = road.id;
         jroad["length"] = road.length;
 
+        // Add junction info for debugging
+        if (road.junction != "-1") {
+            jroad["junction_id"] = road.junction;
+        }
+
+        try {
+            // Calculate reference line vertices with a 0.5m step
+            nlohmann::json centerline_json = nlohmann::json::array();
+            const double step = 0.5;
+            for (double s = 0.0; s <= road.length; s += step) {
+                odr::Vec3D point = road.ref_line.get_xyz(s);
+                centerline_json.push_back({
+                    {"x", point[0]},
+                    {"y", point[1]},
+                    {"z", point[2]}
+                });
+            }
+
+            if (centerline_json.empty()) {
+                jroad["parsing_status"] = "warning";
+                jroad["error_message"] = "Failed to generate centerline points.";
+                jroad["centerline"] = nlohmann::json::array();
+            } else {
+                jroad["centerline"] = centerline_json;
+                jroad["parsing_status"] = "success";
+            }
+        } catch (const std::exception& e) {
+            // Catch any exceptions during geometry calculation
+            jroad["parsing_status"] = "failed";
+            jroad["error_message"] = e.what();
+            jroad["centerline"] = nlohmann::json::array(); // Ensure centerline is always present
+        }
+
         // planView
         nlohmann::json jPlan;
         jPlan["geometries"] = nlohmann::json::array();

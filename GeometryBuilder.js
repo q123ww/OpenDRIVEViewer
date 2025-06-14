@@ -22,42 +22,38 @@ export class GeometryBuilder {
         this.logger.log('GeometryBuilder initialization complete');
     }
 
-    createRoadSegmentMesh(road, cameraDistance) {
+    createRoadSegmentMesh(road) {
+        if (!road || !road.centerline || road.centerline.length < 2) {
+            this.logger.warn(`Road ${road.id} has insufficient centerline data to create a mesh.`);
+            return null;
+        }
+
         try {
-            const points = [];
-            
-            // 각 지오메트리 세그먼트 처리
-            for (const geometry of road.planView.geometries) {
-                const segmentPoints = this.calculateRoadPoints(geometry);
-                if (points.length > 0 && segmentPoints.length > 0) {
-                    // 중복 첫 포인트 제거
-                    points.push(...segmentPoints.slice(1));
-                } else {
-                    points.push(...segmentPoints);
-                }
-            }
+            // OpenDRIVE의 X-Y 좌표를 Three.js의 X-Z 좌표로 변환
+            const points = road.centerline.map(p => new THREE.Vector3(p.x, 0, p.y));  // y를 z로 매핑
 
-            // 버퍼 지오메트리 생성
-            const roadGeometry = new THREE.BufferGeometry();
-            roadGeometry.setFromPoints(points);
-
-            // 도로 메시 생성
-            const roadMaterial = new THREE.LineBasicMaterial({ 
-                color: 0xffffff,  // 흰색
-                linewidth: 2
+            const roadGeometry = new THREE.BufferGeometry().setFromPoints(points);
+            const roadMaterial = new THREE.LineBasicMaterial({
+                color: 0xffffff, // White
+                linewidth: 2,
+                // Three.js r128+, LineBasicMaterial의 linewidth는 1 이상에서 효과가 없을 수 있습니다.
+                // 더 두꺼운 선이 필요하다면 Line2, LineGeometry, LineMaterial을 사용해야 합니다.
             });
-            const roadMesh = new THREE.Line(roadGeometry, roadMaterial);
-            roadMesh.name = `road_${road.id}`;
-            roadMesh.userData = { 
-                type: 'roadLine', 
-                roadId: road.id, 
-                length: road.length 
-            };
 
+            const roadMesh = new THREE.Line(roadGeometry, roadMaterial);
+            roadMesh.name = `road_${road.id}_ref_line`;
+            roadMesh.userData = {
+                type: 'roadLine',
+                roadId: road.id,
+                length: road.length
+            };
+            
+            this.logger.log(`Created road segment mesh for road ${road.id} with ${points.length} vertices.`);
             return roadMesh;
+
         } catch (error) {
             this.logger.error(`Error creating road segment mesh for road ${road.id}:`, error);
-            throw error;
+            return null; // 오류 발생 시 null 반환
         }
     }
 

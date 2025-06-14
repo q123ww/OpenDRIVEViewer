@@ -11,67 +11,119 @@ import loadWasmModule from './OpenDriveWasm.js?v=20250614e';
 export class OpenDriveViewer {
     constructor() {
         this.logger = new DebugLogger('OpenDriveViewer');
+        this.logger.log('Constructing OpenDriveViewer...');
+        
+        this.wasm = null;
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        this.uiManager = null;
+        this.sceneManager = null;
+        this.geometryBuilder = null;
+    }
+
+    async init() {
         this.logger.log('Initializing OpenDriveViewer...');
 
         try {
-            // THREE.js 초기화
-            this.scene = new THREE.Scene();
-            this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            this.renderer = new THREE.WebGLRenderer({ antialias: true });
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(this.renderer.domElement);
+            // UI 요소 정의 및 UIManager 초기화
+            this.initializeUI();
 
-            // 컨트롤 초기화 - OrbitControls를 직접 사용
-            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-            this.controls.enableDamping = true;
-            this.controls.dampingFactor = 0.05;
+            // Three.js 객체 초기화
+            this.initializeThreeJS();
 
-            // UI 요소 정의
-            const uiElements = {
-                fileInput: document.getElementById('fileInput'),
-                loadDefaultBtn: document.getElementById('loadDefaultBtn'),
-                toggleReferenceLinesBtn: document.getElementById('toggleReferenceLinesBtn'),
-                roadList: document.getElementById('roadList'),
-                loadingIndicator: document.getElementById('loadingIndicator'),
-                showReferenceLines: document.getElementById('showReferenceLines'),
-                showLaneLines: document.getElementById('showLaneLines'),
-                showDrivingLanes: document.getElementById('showDrivingLanes'),
-                showBorderLanes: document.getElementById('showBorderLanes'),
-                showSidewalkLanes: document.getElementById('showSidewalkLanes')
-            };
-
-            // UI 요소 확인
-            for (const [key, element] of Object.entries(uiElements)) {
-                if (!element) {
-                    throw new Error(`Required UI element not found: ${key}`);
-                }
-            }
-
-            // UIManager 초기화
-            this.uiManager = new UIManager(this.logger, uiElements);
-
-            // SceneManager 초기화
+            // SceneManager 초기화 및 Scene 객체 전달
             this.sceneManager = new SceneManager('viewerContainer', this.logger, this.uiManager);
+            this.sceneManager.setScene(this.scene, this.camera, this.renderer, this.controls);
             this.sceneManager.startAnimationLoop();
 
-            // GeometryBuilder 초기화 (scene 전달)
+            // GeometryBuilder 초기화
             this.geometryBuilder = new GeometryBuilder(this.logger, this.scene);
-            // SceneManager와 연결
             this.sceneManager.geometryBuilder = this.geometryBuilder;
             
             // 이벤트 리스너 설정
             this.setupEventListeners();
-            
-            // 초기 카메라 위치 설정
-            this.camera.position.set(0, 50, 50);
-            this.camera.lookAt(0, 0, 0);
 
-            this.logger.log('OpenDriveViewer initialization complete');
+            this.logger.log('OpenDriveViewer Core initialization complete. Now loading WASM.');
+            
+            // WASM 모듈 초기화
+            await this.initializeWasm();
+            
+            this.logger.log('All initializations are complete.');
+
         } catch (error) {
             this.logger.error('Failed to initialize OpenDriveViewer:', error);
             console.error('Error stack:', error.stack);
-            throw new Error('An unexpected error occurred');
+            // UI에 에러 메시지 표시
+            if(this.uiManager) {
+                this.uiManager.showError('Critical initialization failed: ' + error.message);
+            }
         }
+    }
+
+    initializeUI() {
+        const uiElements = {
+            fileInput: document.getElementById('fileInput'),
+            loadDefaultBtn: document.getElementById('loadDefaultBtn'),
+            toggleReferenceLinesBtn: document.getElementById('toggleReferenceLinesBtn'),
+            roadList: document.getElementById('roadList'),
+            loadingIndicator: document.getElementById('loadingIndicator'),
+            showReferenceLines: document.getElementById('showReferenceLines'),
+            showLaneLines: document.getElementById('showLaneLines'),
+            showDrivingLanes: document.getElementById('showDrivingLanes'),
+            showBorderLanes: document.getElementById('showBorderLanes'),
+            showSidewalkLanes: document.getElementById('showSidewalkLanes')
+        };
+        for (const [key, element] of Object.entries(uiElements)) {
+            if (!element) throw new Error(`Required UI element not found: ${key}`);
+        }
+        this.uiManager = new UIManager(this.logger, uiElements);
+    }
+
+    initializeThreeJS() {
+        // SceneManager의 컨테이너 가져오기
+        const container = document.getElementById('viewerContainer');
+        if (!container) throw new Error("Viewer container 'viewerContainer' not found.");
+
+        // Scene
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x202124);
+
+        // Camera (Orthographic)
+        const aspect = container.clientWidth / container.clientHeight;
+        const viewSize = 100; // 더 넓은 뷰
+        this.camera = new THREE.OrthographicCamera(
+            -aspect * viewSize / 2, aspect * viewSize / 2,
+            viewSize / 2, -viewSize / 2,
+            0.1, 20000
+        );
+        
+        // 카메라 위치 설정 (위에서 아래로 보는 뷰)
+        this.camera.position.set(0, 100, 0);
+        this.camera.lookAt(0, 0, 0);
+        this.camera.up.set(0, 0, -1); // Z축이 위쪽을 가리키도록 설정
+
+        // Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(container.clientWidth, container.clientHeight);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // Canvas를 SceneManager 컨테이너에 직접 추가
+        container.appendChild(this.renderer.domElement);
+
+        // Controls
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.screenSpacePanning = true;
+        
+        // OrbitControls 설정
+        this.controls.minPolarAngle = 0; // 수직 회전 제한 (위에서 아래로)
+        this.controls.maxPolarAngle = Math.PI / 2; // 수평 회전 제한
+        this.controls.enableRotate = true;
+        this.controls.minZoom = 0.1;
+        this.controls.maxZoom = 20;
     }
 
     async initializeWasm() {
@@ -132,9 +184,10 @@ export class OpenDriveViewer {
         });
 
         // 기본 파일 로드 버튼
-        this.uiManager.uiElements.loadDefaultBtn.addEventListener('click', () => {
+        this.uiManager.uiElements.loadDefaultBtn.addEventListener('click', async () => {
+            this.logger.log('Default load button CLICKED.');
             this.logger.log('Loading default file...');
-            this.loadDefaultFile();
+            await this.loadDefaultFile();
         });
 
         // Reference 라인 토글
@@ -161,39 +214,62 @@ export class OpenDriveViewer {
 
         // 창 크기 변경 이벤트
         window.addEventListener('resize', () => {
-            this.camera.aspect = window.innerWidth / window.innerHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            const container = document.getElementById('viewerContainer');
+            if (this.camera && this.renderer && container) {
+                const newWidth = container.clientWidth;
+                const newHeight = container.clientHeight;
+                const aspect = newWidth / newHeight;
+
+                const viewSize = (this.camera.top - this.camera.bottom) * this.camera.zoom;
+                this.camera.left = -aspect * viewSize / 2;
+                this.camera.right = aspect * viewSize / 2;
+                this.camera.top = viewSize / 2;
+                this.camera.bottom = -viewSize / 2;
+
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(newWidth, newHeight);
+            }
         });
     }
 
     async loadFile(file) {
-        try {
+        if (!file) {
+            this.logger.error('No file provided to loadFile.');
+            return;
+        }
         this.uiManager.showLoading(true);
-            this.uiManager.updateLoadingProgress(0);
+        this.logger.log(`Loading file: ${file.name}...`);
 
-            const text = await file.text();
-            this.uiManager.updateLoadingProgress(20);
-        
-        this.sceneManager.clearScene();
-        this.uiManager.clearRoadList();
-            this.uiManager.updateLoadingProgress(40);
-
+        try {
+            const fileContent = await file.text();
+            
             if (!this.wasm) {
-                throw new Error('Parser module not ready');
+                throw new Error("WASM module is not initialized. Cannot parse file.");
             }
 
-            const resultJson = this.wasm.parseXodr(text);
-            const parsedData = JSON.parse(resultJson);
+            this.logger.log('Sending file content to WASM parser...');
+            const jsonResult = this.wasm.parseXodr(fileContent);
+            this.logger.log('Received JSON from WASM parser.');
+            const openDriveData = JSON.parse(jsonResult);
+            
+            // --- DIAGNOSTIC LOG ---
+            // This will log the entire data structure to the developer console.
+            // We can inspect this to see why some roads are failing.
+            this.logger.log('Full data from WASM parser posted to console.');
+            console.log("Full OpenDrive Data Structure:", openDriveData);
+            // --- END DIAGNOSTIC LOG ---
+
+            this.sceneManager.clearScene();
+            this.uiManager.clearRoadList();
 
             // 지오메트리 데이터 포함 시 씬에 로드
-            if (parsedData.roads && parsedData.roads.length > 0) {
-                await this.sceneManager.loadOpenDrive(parsedData);
+            if (openDriveData.roads && openDriveData.roads.length > 0) {
+                await this.sceneManager.loadOpenDrive(openDriveData);
             }
 
             // Populate road list if roads array present
-            if (parsedData.roads) {
-                this.uiManager.populateRoadList(parsedData.roads.map(r=>({id:r.id,name:`Road ${r.id}`,length:r.length,status:'basic'})));
+            if (openDriveData.roads) {
+                this.uiManager.populateRoadList(openDriveData.roads.map(r=>({id:r.id,name:`Road ${r.id}`,length:r.length,status:'basic'})));
             }
 
             this.uiManager.updateLoadingProgress(100);
@@ -206,6 +282,12 @@ export class OpenDriveViewer {
     }
 
     async loadDefaultFile() {
+        if (!this.wasm) {
+            this.uiManager.showError("WASM module is not ready. Please wait.");
+            this.logger.warn("loadDefaultFile called before WASM was ready.");
+            return;
+        }
+
         try {
             const response = await fetch('./Germany_2018.xodr');
             const text = await response.text();

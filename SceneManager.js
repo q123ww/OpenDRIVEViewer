@@ -8,116 +8,96 @@ export class SceneManager {
         this.logger = logger || console;
         this.logger.log(`SceneManager: Constructor called with containerId: ${containerId}.`);
         this.uiManager = uiManager;
-        this.egoVehicleObject = null; // Ego vehicle 3D object
+        
+        // 의존성 주입을 통해 설정될 속성들
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        
+        // 내부 관리 객체
+        this.egoVehicleObject = null;
+        this.roadContainer = new THREE.Group();
+        this.animationFrameId = null;
+        this.raycaster = new THREE.Raycaster();
+        this.mouse = new THREE.Vector2();
+        this.intersectedObject = null;
+        this.originalMaterial = null;
+        this.stats = null;
+        this.referenceLinesVisible = false;
+        this.lastLodUpdate = 0;
+        this.lodUpdateInterval = 1000;
 
         try {
             this.container = document.getElementById(containerId);
             if (!this.container) {
-                this.logger.error(`SceneManager: Container element not found with ID: '${containerId}'.`);
                 throw new Error(`SceneManager critical error: Container element '${containerId}' not found.`);
             }
             this.logger.log("SceneManager: Container element retrieved successfully.");
-
-            // Canvas 요소를 동적으로 생성
-            this.canvas = document.createElement('canvas');
-            this.container.appendChild(this.canvas); // 컨테이너에 canvas 추가
-            this.logger.log("SceneManager: Canvas element created and appended to container.");
-
-            // 캔버스 크기를 컨테이너에 맞춤 (CSS로도 설정 가능)
-            this.canvas.style.width = '100%';
-            this.canvas.style.height = '100%';
-            // renderer.setSize는 실제 픽셀 크기를 설정하므로, clientWidth/Height 사용
-
-            this.scene = new THREE.Scene();
-            this.logger.log("SceneManager: THREE.Scene created.");
-
-            const canvasWidth = this.canvas.clientWidth;
-            const canvasHeight = this.canvas.clientHeight;
-            this.logger.log(`SceneManager: Canvas dimensions for camera: ${canvasWidth}x${canvasHeight}`);
-            if (canvasWidth === 0 || canvasHeight === 0) {
-                this.logger.warn(`SceneManager: Canvas dimensions are zero at camera setup. Ensure container is visible and has dimensions.`);
-            }
-            
-            // OrthographicCamera로 변경
-            const aspect = (canvasWidth > 0 && canvasHeight > 0) ? canvasWidth / canvasHeight : 1;
-            const viewSize = 20; // 초기 뷰 범위 (가로 또는 세로 중 짧은 쪽 기준 20m)
-            this.camera = new THREE.OrthographicCamera(
-                -aspect * viewSize / 2, // left
-                 aspect * viewSize / 2, // right
-                 viewSize / 2,          // top
-                -viewSize / 2,          // bottom
-                0.1,                    // near
-                20000                   // far
-            );
-            this.logger.log("SceneManager: THREE.OrthographicCamera created.");
-
-            this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
-            this.logger.log("SceneManager: THREE.WebGLRenderer instance attempted to be created.");
-            if (!this.renderer) {
-                this.logger.error("SceneManager: Failed to create THREE.WebGLRenderer instance.");
-                throw new Error("SceneManager critical error: Failed to create WebGLRenderer.");
-            }
-            this.logger.log("SceneManager: THREE.WebGLRenderer instance created successfully.");
-
-            this.controls = null;
-            this.gridHelper = null;
-
-            this.roadContainer = new THREE.Group(); 
-            this.scene.add(this.roadContainer);
-            this.logger.log("SceneManager: Road container group created and added to scene.");
-
-            this.animationFrameId = null;
-
-            // Raycasting 관련 초기화
-            this.raycaster = new THREE.Raycaster();
-            this.mouse = new THREE.Vector2();
-            this.intersectedObject = null;
-            this.originalMaterial = null; // 하이라이트를 위해 원래 재질 저장
-
-            this.stats = null; // Stats 인스턴스
-
-            this.referenceLinesVisible = false;  // 참조선 기본적으로 숨김
-
-            this.logger.log("SceneManager: SceneManager instance fields initialized.");
-
-            this.lastLodUpdate = 0;
-            this.lodUpdateInterval = 1000; // 1초마다 LOD 업데이트
-
         } catch (error) {
-            this.logger.error("SceneManager: Error during constructor execution:", error.message, error.stack);
-            throw error; 
+            this.logger.error("SceneManager: Error during constructor:", error.message, error.stack);
+            throw error;
         }
-        this.logger.log("SceneManager: SceneManager constructor finished successfully.");
+    }
 
-        // OrbitControls 추가
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-        this.controls.screenSpacePanning = true; // 직교 카메라에서는 true가 더 편리할 수 있음
-        this.controls.enableRotate = true; // 회전은 가능하도록 둠 (필요시 false)
-        this.controls.minZoom = 0.1; // 확대 제한
-        this.controls.maxZoom = 20;  // 축소 제한
+    setScene(scene, camera, renderer, controls) {
+        this.scene = scene;
+        this.camera = camera;
+        this.renderer = renderer;
+        this.controls = controls;
 
-        window.addEventListener('resize', this.onWindowResize.bind(this), false);
+        this.logger.log("SceneManager: Scene, camera, renderer, and controls have been set.");
+        this.setupScene();
+    }
+
+    setupScene() {
+        this.logger.log("SceneManager: Setting up scene additions (road container, stats, listeners)...");
         
-        // 마우스 이벤트 리스너 등록
+        if (!this.scene) {
+            this.logger.error("SceneManager: Scene object is not set before setupScene call.");
+            return;
+        }
+
+        this.scene.add(this.roadContainer);
+        
+        this.initializeStats();
+        this.setupEventListeners();
+
+        this.logger.log("SceneManager: Scene setup completed.");
+    }
+
+    initializeScene() {
+        this.logger.log("SceneManager: Initializing scene...");
+        
+        // THREE.js 초기화는 OpenDriveViewer에서 수행하므로 여기서는 생략
+        this.roadContainer = new THREE.Group();
+        this.scene.add(this.roadContainer);
+
+        // 이벤트 리스너 설정
+        window.addEventListener('resize', this.onWindowResize.bind(this), false);
+        this.setupEventListeners();
+
+        // FPS Stats 초기화
+        this.initializeStats();
+
+        this.logger.log("SceneManager: Scene initialization completed.");
+    }
+
+    setupEventListeners() {
         if (this.renderer && this.renderer.domElement) {
             this.renderer.domElement.addEventListener('mousemove', this.onMouseMove.bind(this), false);
             this.renderer.domElement.addEventListener('mouseleave', this.onMouseLeave.bind(this), false);
             this.renderer.domElement.addEventListener('click', this.onMouseClick.bind(this), false);
-            this.logger.log("SceneManager: Mouse event listeners added to renderer.domElement.");
-        } else {
-            this.logger.error("SceneManager: renderer.domElement not available for adding mouse listeners.");
+            this.logger.log("SceneManager: Mouse event listeners added.");
         }
+    }
 
-        // FPS Stats 초기화
+    initializeStats() {
         this.stats = new Stats();
-        this.container.appendChild(this.stats.dom); // FPS 표시기를 컨테이너에 추가
-        this.stats.dom.style.position = 'absolute'; // 다른 UI 요소와 겹치지 않도록
-        this.stats.dom.style.left = '0px'; 
-        this.stats.dom.style.bottom = '10px'; // top 대신 bottom 사용
-
-        this.logger.log("SceneManager: Scene initialized.");
+        this.container.appendChild(this.stats.dom);
+        this.stats.dom.style.position = 'absolute';
+        this.stats.dom.style.left = '0px';
+        this.stats.dom.style.bottom = '10px';
     }
 
     initScene() {
@@ -151,39 +131,8 @@ export class SceneManager {
     }
 
     onWindowResize() {
-        this.logger.log("SceneManager: Window resized.");
-        if (this.canvas && this.camera && this.renderer) {
-            const newWidth = this.canvas.clientWidth;
-            const newHeight = this.canvas.clientHeight; 
-
-            if (newWidth === 0 || newHeight === 0) {
-                this.logger.warn("SceneManager: Canvas dimensions are zero, skipping resize.");
-                return;
-            }
-
-            if (this.camera instanceof THREE.OrthographicCamera) {
-                const aspect = newWidth / newHeight;
-                const viewSize = 20; 
-                
-                const currentZoom = this.camera.zoom;
-                const newViewSizeHeight = viewSize / currentZoom;
-                const newViewSizeWidth = newViewSizeHeight * aspect;
-
-                this.camera.left = -newViewSizeWidth / 2;
-                this.camera.right = newViewSizeWidth / 2;
-                this.camera.top = newViewSizeHeight / 2;
-                this.camera.bottom = -newViewSizeHeight / 2;
-
-            } else if (this.camera instanceof THREE.PerspectiveCamera) {
-                this.camera.aspect = newWidth / newHeight;
-            }
-            
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(newWidth, newHeight);
-            this.logger.log(`SceneManager: Renderer resized to ${newWidth}x${newHeight}`);
-        } else {
-            this.logger.warn("SceneManager: Resize event triggered but canvas, camera or renderer is not available.");
-        }
+        // 이 로직은 OpenDriveViewer.js에서 중앙 관리합니다.
+        this.logger.log("SceneManager: Resize event noted, but handled by OpenDriveViewer.");
     }    
 
     startAnimationLoop() {
@@ -745,52 +694,37 @@ export class SceneManager {
     }
 
     async loadOpenDrive(openDriveData) {
-        if (!openDriveData || !openDriveData.roads) {
-            this.logger.error("Invalid OpenDRIVE data or no roads found from WASM parser.");
+        this.logger.log(`SceneManager: Loading OpenDRIVE data with ${openDriveData.roads.length} roads.`);
+        this.clearScene(); // 기존 도로 지우기
+
+        if (!this.geometryBuilder) {
+            this.logger.error("SceneManager: GeometryBuilder is not initialized!");
             return;
         }
 
-        this.clearScene();
+        const roadsToProcess = openDriveData.roads || [];
+        let roadsAdded = 0;
 
-        for (const road of openDriveData.roads) {
-            // Step 1: Process the raw data from the WASM parser.
-            // Convert the centerline points into an array of THREE.Vector3 objects.
-            if (road.centerline && road.centerline.length > 1) {
-                road.referencePoints = road.centerline.map(p => new THREE.Vector3(p.x, p.y, p.z || 0));
-            } else {
-                // If there are no points, we cannot draw the road. Skip to the next one.
-                this.logger.warn(`Road ${road.id} has insufficient centerline data. Skipping.`);
-                continue;
-            }
+        for (const roadData of roadsToProcess) {
+            try {
+                // 도로 참조선(중심선) 메시 생성
+                const roadMesh = this.geometryBuilder.createRoadSegmentMesh(roadData);
+                if (roadMesh) {
+                    this.addRoad(roadData.id, roadMesh);
+                    roadsAdded++;
+                }
 
-            const cameraDistance = this.camera.position.length();
+                // 여기에 차선, 표지판 등 다른 요소들을 빌드하는 로직을 추가할 수 있습니다.
+                // 예: const laneGroup = this.geometryBuilder.buildLaneMeshes(roadData);
+                // if (laneGroup) this.roadContainer.add(laneGroup);
 
-            // Step 2: Create a visual representation of the reference line for debugging.
-            const refLineGeometry = new THREE.BufferGeometry().setFromPoints(road.referencePoints);
-            const refLineMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 }); // Red line
-            const refLineMesh = new THREE.Line(refLineGeometry, refLineMaterial);
-            refLineMesh.name = `road_ref_line_${road.id}`;
-            this.addRoad(road.id, refLineMesh);
-
-            // Step 3: Call the GeometryBuilder functions with the processed road object.
-            const surfaceMesh = this.geometryBuilder.buildRoadSurfaceMesh(road, cameraDistance);
-            if (surfaceMesh) {
-                this.roadContainer.add(surfaceMesh);
-            }
-
-            const laneGroup = this.geometryBuilder.buildLaneMeshes(road, cameraDistance);
-            if (laneGroup) {
-                this.roadContainer.add(laneGroup);
-            }
-
-            const markGroup = this.geometryBuilder.buildRoadMarkMeshes(road, cameraDistance);
-            if (markGroup) {
-                this.roadContainer.add(markGroup);
+            } catch (error) {
+                this.logger.error(`Failed to process road ${roadData.id}:`, error);
             }
         }
-
+        
+        this.logger.log(`SceneManager: Finished loading roads. Added ${roadsAdded} road meshes.`);
         this.updateCameraToFitAllRoads();
-        this.logger.log("Finished loading all roads from OpenDRIVE data.");
     }
 
     onMouseClick(event) {

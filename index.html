@@ -312,43 +312,20 @@
     
     <!-- Application Scripts -->
     <script type="module">
-        import { OpenDriveViewer } from './OpenDriveViewer.js';
+    import { OpenDriveViewer } from './OpenDriveViewer.js';
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            console.log('DOM loaded, starting initialization...');
-            
-            // UI 요소 확인
-            console.log('Checking UI elements...');
-            const requiredElements = [
-                'fileInput',
-                'loadDefaultBtn',
-                'toggleReferenceLinesBtn',
-                'roadList',
-                'loadingIndicator',
-                'showReferenceLines',
-                'showLaneLines',
-                'showDrivingLanes',
-                'showBorderLanes',
-                'showSidewalkLanes'
-            ];
-            for (const id of requiredElements) {
-                const element = document.getElementById(id);
-                console.log(`Checking element ${id}: ${element ? 'found' : 'not found'}`);
-                if (!element) {
-                    throw new Error(`Required UI element not found: ${id}`);
-                }
-            }
-            console.log('All UI elements found, initializing OpenDriveViewer...');
+// DOM이 완전히 로드된 후 OpenDriveViewer를 초기화합니다.
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('DOM loaded, starting initialization...');
+    
+    // OpenDriveViewer 인스턴스 생성
+    const viewer = new OpenDriveViewer();
+    
+    // init() 메서드를 호출하여 전체 초기화 프로세스를 시작합니다.
+    await viewer.init();
 
-            try {
-                const viewer = new OpenDriveViewer();
-                await viewer.initializeWasm();
-                console.log('OpenDriveViewer initialized successfully');
-            } catch (error) {
-                console.error('Failed to initialize OpenDriveViewer:', error);
-                console.error('Error stack:', error.stack);
-            }
-        });
+    console.log('OpenDriveViewer initialized successfully.');
+});
     </script>
 
     <!-- Removed obsolete OpenDriveParser global assignment -->
