@@ -94,9 +94,6 @@ export class SceneManager {
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
         this.controls.screenSpacePanning = true; // 직교 카메라에서는 true가 더 편리할 수 있음
-        // this.controls.minDistance = 10; // Orthographic에서는 zoom으로 제어
-        // this.controls.maxDistance = 5000;
-        // this.controls.maxPolarAngle = Math.PI / 2; // 기본적으로 위에서만 보도록 유지
         this.controls.enableRotate = true; // 회전은 가능하도록 둠 (필요시 false)
         this.controls.minZoom = 0.1; // 확대 제한
         this.controls.maxZoom = 20;  // 축소 제한
@@ -119,7 +116,6 @@ export class SceneManager {
         this.stats.dom.style.position = 'absolute'; // 다른 UI 요소와 겹치지 않도록
         this.stats.dom.style.left = '0px'; 
         this.stats.dom.style.bottom = '10px'; // top 대신 bottom 사용
-        // this.stats.dom.style.top = '0px'; // 기존 top 스타일 제거 또는 주석 처리
 
         this.logger.log("SceneManager: Scene initialized.");
     }
@@ -167,11 +163,8 @@ export class SceneManager {
 
             if (this.camera instanceof THREE.OrthographicCamera) {
                 const aspect = newWidth / newHeight;
-                // viewSize는 카메라 생성 시 설정한 값을 사용하거나, 현재 카메라 상태에서 역산.
-                // 여기서는 생성 시 viewSize와 동일하게 20으로 가정.
                 const viewSize = 20; 
                 
-                // 현재 zoom 레벨을 유지하면서 aspect ratio 변경
                 const currentZoom = this.camera.zoom;
                 const newViewSizeHeight = viewSize / currentZoom;
                 const newViewSizeWidth = newViewSizeHeight * aspect;
@@ -181,7 +174,7 @@ export class SceneManager {
                 this.camera.top = newViewSizeHeight / 2;
                 this.camera.bottom = -newViewSizeHeight / 2;
 
-            } else if (this.camera instanceof THREE.PerspectiveCamera) { // 기존 PerspectiveCamera 코드
+            } else if (this.camera instanceof THREE.PerspectiveCamera) {
                 this.camera.aspect = newWidth / newHeight;
             }
             
@@ -226,7 +219,7 @@ export class SceneManager {
     }
 
     addRoad(roadId, roadMesh) {
-        this.logger.log(`SceneManager: Adding road mesh for ID: ${roadId}. Mesh Name: ${roadMesh.name}, Mesh UUID: ${roadMesh.uuid}`); // Mesh 정보 추가
+        this.logger.log(`SceneManager: Adding road mesh for ID: ${roadId}. Mesh Name: ${roadMesh.name}, Mesh UUID: ${roadMesh.uuid}`);
         if (!roadId || !roadMesh) {
             this.logger.error("SceneManager: roadId or roadMesh is null/undefined. Cannot add road.");
             return;
@@ -236,13 +229,11 @@ export class SceneManager {
             return;
         }
 
-        // roadMesh는 roadContainer의 가시성 설정( setRoadsVisible )을 그대로 따르도록 기본값 true 유지
         roadMesh.visible = true;
         this.roadContainer.add(roadMesh);
         this.logger.log(`SceneManager: Mesh ${roadMesh.name} (ID: ${roadId}) ADDED to roadContainer. roadContainer children: ${this.roadContainer.children.length}. Mesh visibility: ${roadMesh.visible}`);
     
-        // 참조선 그룹 내부 로깅 추가
-        if (roadMesh.name && roadMesh.name.includes('_ref_group_')) { // 또는 userData.type === 'referenceLineGroup' 등 더 명확한 식별자 사용
+        if (roadMesh.name && roadMesh.name.includes('_ref_group_')) {
             this.logger.log(`  Iterating children of reference group: ${roadMesh.name}`);
             if (roadMesh.children.length === 0) {
                 this.logger.log(`    Reference group ${roadMesh.name} has NO children when added to scene.`);
@@ -251,8 +242,6 @@ export class SceneManager {
                 this.logger.log(`    Ref Line Child in Scene[${index}]: Name: ${child.name}, Visible: ${child.visible}, userData.type: ${child.userData?.type}, UUID: ${child.uuid}`);
             });
         }
-        // 전체 도로 네트워크의 바운딩 박스를 업데이트하고 카메라 조정 (옵션)
-        // this.updateCameraToFitAllRoads(); 
     }
     
     removeObjectByName(name) {
@@ -260,7 +249,6 @@ export class SceneManager {
         const objectToRemove = this.roadContainer.getObjectByName(name);
         if (objectToRemove) {
             this.roadContainer.remove(objectToRemove);
-            // 지오메트리 및 재질 dispose
             if (objectToRemove.geometry) objectToRemove.geometry.dispose();
             if (objectToRemove.material) {
                 if (Array.isArray(objectToRemove.material)) {
@@ -280,13 +268,11 @@ export class SceneManager {
     clearScene() {
         this.logger.log("SceneManager: clearScene() called. Attempting to remove all road objects.");
         let removalCount = 0;
-        // roadContainer에서 모든 자식 객체 제거
         if (this.roadContainer) {
             this.logger.log(`SceneManager: roadContainer found. Children count before clearing: ${this.roadContainer.children.length}`);
             while (this.roadContainer.children.length > 0) {
                 const child = this.roadContainer.children[0];
                 this.roadContainer.remove(child);
-                // 필요하다면 메쉬의 지오메트리와 재질도 dispose
                 if (child.geometry) child.geometry.dispose();
                 if (child.material) {
                     if (Array.isArray(child.material)) {
@@ -303,7 +289,6 @@ export class SceneManager {
             this.logger.warn("SceneManager: roadContainer not found during clearScene.");
         }
         
-        // Remove Ego vehicle if it exists
         if (this.egoVehicleObject) {
             this.scene.remove(this.egoVehicleObject);
             if (this.egoVehicleObject.geometry) this.egoVehicleObject.geometry.dispose();
@@ -311,9 +296,6 @@ export class SceneManager {
             this.egoVehicleObject = null;
             this.logger.log("SceneManager: Ego vehicle removed from scene.");
         }
-        
-        // 이전에 추가된 다른 임시 객체들(예: 테스트 큐브)도 여기서 제거해야 할 수 있음
-        // 예시: this.scene.remove(this.testCube);
 
         this.logger.log("SceneManager: clearScene() finished.");
     }
@@ -322,7 +304,6 @@ export class SceneManager {
         this.logger.log("SceneManager: updateCameraToFitAllRoads() called.");
         if (this.roadContainer.children.length === 0) {
             this.logger.log("SceneManager: No roads in scene to fit camera.");
-            // 기본 뷰로 리셋 또는 현재 뷰 유지
             this.camera.position.set(0, 50, 100);
             this.camera.lookAt(0, 0, 0);
             if(this.controls) this.controls.update();
@@ -346,23 +327,20 @@ export class SceneManager {
 
         const padding = 1.1; // 10% 여백
 
-        // 카메라 위치: 상공에서 내려다보도록 Y축 위로 이동, Z는 center.z 유지
-        const aboveHeight = Math.max(size.x, size.z) * 0.5 + 10; // 네트워크 크기에 비례한 높이
+        const aboveHeight = Math.max(size.x, size.z) * 0.5 + 10;
         this.camera.position.set(center.x, aboveHeight, center.z);
         this.camera.lookAt(center);
 
-        // 맵이 매우 큰 경우(수십~수백 km) 카메라가 객체보다 멀어 far 클리핑에 걸릴 수 있으므로
-        // bounding box 기반으로 far 값을 동적으로 확장한다.
         const maxDim = Math.max(size.x, size.z);
         this.camera.near = 0.1;
-        this.camera.far = aboveHeight + maxDim * 2; // 여유분 포함
-        // ---- Zoom 계산: 네트워크가 화면에 모두 들어오도록 ----
+        this.camera.far = aboveHeight + maxDim * 2;
+
         if (this.camera instanceof THREE.OrthographicCamera) {
             const viewWidth  = this.camera.right - this.camera.left;
             const viewHeight = this.camera.top - this.camera.bottom;
 
             const requiredWidth  = size.x * padding;
-            const requiredHeight = size.z * padding; // XZ 평면 기준 높이
+            const requiredHeight = size.z * padding;
 
             const zoomX = viewWidth  / requiredWidth;
             const zoomY = viewHeight / requiredHeight;
@@ -373,7 +351,6 @@ export class SceneManager {
 
             this.camera.zoom = newZoom;
 
-            // OrbitControls 범위도 같이 조정
             if (this.controls) {
                 this.controls.minZoom = newZoom * 0.5;
                 this.controls.maxZoom = newZoom * 200;
@@ -388,15 +365,13 @@ export class SceneManager {
             this.controls.update();
         }
 
-        // 그리드 크기를 네트워크에 맞게 재설정
-        const gridSpacing = 100; // 100 m 간격
+        const gridSpacing = 100;
         const gridSize = Math.ceil(Math.max(size.x, size.z) / gridSpacing) * gridSpacing;
-        const divisions = Math.min(200, gridSize / gridSpacing); // 최대 200 division
+        const divisions = Math.min(200, gridSize / gridSpacing);
         if (this.gridHelper) {
             this.scene.remove(this.gridHelper);
         }
         this.gridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0xcccccc);
-        // 더 은은하게: 투명도 낮추기
         if (Array.isArray(this.gridHelper.material)) {
             this.gridHelper.material.forEach(mat => { mat.transparent = true; mat.opacity = 0.15; mat.depthWrite = false; });
         } else {
@@ -433,21 +408,19 @@ export class SceneManager {
                             `Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`,
                             `Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
 
-            const padding = 1.1; // 객체 주변에 약간의 여백 (10%)
+            const padding = 1.1;
             const worldWidth = size.x * padding;
-            const worldHeight = size.z * padding; // XZ 평면을 주로 사용하므로 Y 대신 Z 사용
+            const worldHeight = size.z * padding;
             
-            this.camera.position.set(center.x, center.y + Math.max(worldWidth, worldHeight) * 0.5 + 10, center.z); // Y를 약간 높여서 내려다보는 효과, Z는 중심
+            this.camera.position.set(center.x, center.y + Math.max(worldWidth, worldHeight) * 0.5 + 10, center.z);
             this.camera.lookAt(center.x, center.y, center.z);
 
-            // Orthographic 카메라의 Zoom 레벨 조정
-            // 화면에 더 넓은 쪽 (width 또는 height)이 꽉 차도록 zoom 값 계산
             const aspect = this.canvas.clientWidth / this.canvas.clientHeight;
             const camViewWidth = this.camera.right - this.camera.left;
             const camViewHeight = this.camera.top - this.camera.bottom;
 
             const zoomX = camViewWidth / worldWidth;
-            const zoomZ = camViewHeight / worldHeight; // 높이를 Z 크기로 계산
+            const zoomZ = camViewHeight / worldHeight;
             this.camera.zoom = Math.min(zoomX, zoomZ);
             
             this.camera.updateProjectionMatrix();
@@ -462,26 +435,6 @@ export class SceneManager {
         }
     }
 
-    // Helper for smooth camera animation (requires a library like Tween.js or GSAP)
-    /*
-    animateCameraTo(targetPosition, targetLookAt) {
-        const duration = 1000; // ms
-        const currentCamPos = this.camera.position.clone();
-        const currentLookAt = this.controls.target.clone();
-
-        new TWEEN.Tween({ p: currentCamPos, l: currentLookAt })
-            .to({ p: targetPosition, l: targetLookAt }, duration)
-            .easing(TWEEN.Easing.Quadratic.Out)
-            .onUpdate((obj) => {
-                this.camera.position.copy(obj.p);
-                this.controls.target.copy(obj.l);
-                this.camera.lookAt(obj.l);
-            })
-            .start();
-    }
-    */
-
-    // 마우스 이동 이벤트 핸들러
     onMouseMove(event) {
         if (!this.renderer || !this.camera || !this.roadContainer) return;
 
@@ -490,29 +443,24 @@ export class SceneManager {
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.roadContainer.children, true); // true for recursive
+        const intersects = this.raycaster.intersectObjects(this.roadContainer.children, true);
 
         if (intersects.length > 0) {
             const firstIntersected = intersects[0].object;
-            // Line 객체만 대상으로 하거나, userData가 있는 객체만 대상으로 할 수 있음
             if (firstIntersected.userData && firstIntersected.userData.roadId) {
                 if (this.intersectedObject !== firstIntersected) {
-                    // 이전 객체 하이라이트 제거
                     if (this.intersectedObject && this.originalMaterial) {
                         this.intersectedObject.material = this.originalMaterial;
                         this.originalMaterial = null;
                     }
                     this.intersectedObject = firstIntersected;
-                    // 새 객체 하이라이트 (색상 변경 예시)
                     if (this.intersectedObject.material) {
                         this.originalMaterial = this.intersectedObject.material;
-                        // LineBasicMaterial의 경우, clone 후 color 변경
                         if (this.intersectedObject.material instanceof THREE.LineBasicMaterial) {
                             const highlightMaterial = this.intersectedObject.material.clone();
-                            highlightMaterial.color.set(0xff0000); // 빨간색으로 하이라이트
+                            highlightMaterial.color.set(0xff0000);
                             this.intersectedObject.material = highlightMaterial;
-                        } 
-                        // TODO: 다른 타입의 재질에 대한 하이라이트 처리 추가 가능
+                        }
                     }
 
                     const hitPt = intersects[0].point;
@@ -532,16 +480,15 @@ export class SceneManager {
                     tooltipText += `\nX:${odrX}m Y:${odrY}m`;
 
                     if (this.uiManager) {
-                        // Pass basic tooltip text and the full userData for more details
                         this.uiManager.showTooltip(tooltipText, event.clientX + 10, event.clientY + 10, this.intersectedObject.userData);
                     }
 
-                } else { // 동일 객체 위에 마우스가 계속 있는 경우, 툴크 위치만 업데이트
+                } else {
                      if (this.uiManager && this.intersectedObject && this.intersectedObject.userData.roadId) {
                          this.uiManager.updateTooltipPosition(event.clientX + 10, event.clientY + 10);
                      }
                 }
-            } else { // userData.roadId가 없는 유효한 교차 객체 (예: GridHelper)
+            } else {
                  this.clearIntersected();
             }
         } else {
@@ -583,16 +530,7 @@ export class SceneManager {
         const egoMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); 
         this.egoVehicleObject = new THREE.Mesh(egoGeometry, egoMaterial);
 
-        // Consistent coordinate transformation:
-        // OpenDRIVE X -> Three.js X
-        // OpenDRIVE Y -> Three.js -Z
-        // OpenDRIVE Z (height) -> Three.js Y
-        this.egoVehicleObject.position.set(egoInfo.x, egoInfo.z + 1, -egoInfo.y); // egoInfo.z is height, +1 for box center
-        
-        // OpenDRIVE hdg is counter-clockwise from positive X-axis.
-        // Three.js y-rotation is counter-clockwise around positive Y-axis.
-        // Mapping ODR (X,Y) plane to Three.js (X,-Z) plane, a CCW rotation hdg in ODR
-        // becomes a CW rotation -hdg around Y in Three.js to achieve the same world orientation.
+        this.egoVehicleObject.position.set(egoInfo.x, egoInfo.z + 1, -egoInfo.y);
         this.egoVehicleObject.rotation.y = -egoInfo.heading; 
 
         this.egoVehicleObject.name = "ego_vehicle";
@@ -619,30 +557,22 @@ export class SceneManager {
 
         if (egoInfo) {
             this.logger.log("SceneManager: Focusing camera on Ego vehicle based on new egoInfo.", egoInfo);
-            // Use consistent coordinate transformation for the target position
-            currentEgoPosThreeJs = new THREE.Vector3(egoInfo.x, egoInfo.z + 1, -egoInfo.y); // +1 for box center y
+            currentEgoPosThreeJs = new THREE.Vector3(egoInfo.x, egoInfo.z + 1, -egoInfo.y);
             currentEgoHeading = egoInfo.heading;
-        } else if (this.egoVehicleObject) { // Fallback to existing ego object if no new info
+        } else if (this.egoVehicleObject) {
             this.logger.log("SceneManager: egoInfo not provided, focusing on existing egoVehicleObject.");
             currentEgoPosThreeJs = this.egoVehicleObject.position.clone();
-            currentEgoHeading = -this.egoVehicleObject.rotation.y; // Infer heading from rotation
+            currentEgoHeading = -this.egoVehicleObject.rotation.y;
         } else {
-            // Should have been caught by the first if, but as a safeguard.
             this.logger.error("SceneManager: focusOnEgoVehicle called without egoInfo and no existing egoVehicleObject.");
             return;
         }
     
         this.camera.lookAt(currentEgoPosThreeJs); 
     
-        const offsetDistance = 50; // Increased distance for wider view
-        const offsetHeight = 25;   // Increased height
+        const offsetDistance = 50;
+        const offsetHeight = 25;
     
-        // Calculate camera position based on ego's heading in ODR system
-        // ODR X-axis -> Three.js X-axis
-        // ODR Y-axis -> Three.js -Z-axis
-        // Camera behind ego: ODR direction (-cos(hdg), -sin(hdg))
-        // camX_three = egoX_three + (-cos(hdg)) * offsetDistance 
-        // camZ_three = egoZ_three + (+sin(hdg)) * offsetDistance (because ODR -Y direction is Three +Z direction)
         const camX = currentEgoPosThreeJs.x - offsetDistance * Math.cos(currentEgoHeading);
         const camY = currentEgoPosThreeJs.y + offsetHeight;
         const camZ = currentEgoPosThreeJs.z + offsetDistance * Math.sin(currentEgoHeading); 
@@ -665,7 +595,6 @@ export class SceneManager {
         let objectsChanged = 0;
         this.scene.traverse((object) => {
             if (object.isLine && object.userData) {
-                // Check for lane boundaries OR reference lines matching the laneType
                 if ((object.userData.type === 'laneBoundary' && object.userData.laneType === laneType) || 
                     (object.userData.type === 'referenceLine' && object.userData.laneType === laneType)) {
                     if (object.visible !== visible) {
@@ -686,9 +615,6 @@ export class SceneManager {
         this.logger.log(`SceneManager: Setting roads (all visual elements in roadContainer) visibility to ${visible}`);
         if (this.roadContainer) {
             this.roadContainer.visible = visible;
-            // Note: This will hide/show everything in roadContainer, including reference lines if they are direct children
-            // and not handled separately by setReferenceLinesVisible after this call.
-            // If reference lines are part of a sub-group within road meshes, this will toggle the whole road mesh.
         }
     }
 
@@ -701,14 +627,13 @@ export class SceneManager {
 
     resetToInitialView() {
         this.logger.log("SceneManager: Resetting to initial view.");
-        const egoPosition = new THREE.Vector3(0, 0, 0); // initScene과 동일한 기준점
+        const egoPosition = new THREE.Vector3(0, 0, 0);
         
         this.camera.position.set(egoPosition.x, egoPosition.y + 50, egoPosition.z);
         this.camera.lookAt(egoPosition);
-        this.camera.zoom = 1; // initScene과 동일한 줌 값
-        // OrthographicCamera의 viewSize를 유지하기 위해 left/right/top/bottom 업데이트 필요
+        this.camera.zoom = 1;
         const aspect = (this.canvas.clientWidth > 0 && this.canvas.clientHeight > 0) ? this.canvas.clientWidth / this.canvas.clientHeight : 1;
-        const viewSize = 20; // 초기 viewSize 값 (생성자와 동일하게)
+        const viewSize = 20;
         this.camera.left = -aspect * viewSize / (2 * this.camera.zoom);
         this.camera.right = aspect * viewSize / (2 * this.camera.zoom);
         this.camera.top = viewSize / (2 * this.camera.zoom);
@@ -726,7 +651,6 @@ export class SceneManager {
         this.logger.log("SceneManager: Attempting to focus on Ego vehicle from top-down.");
         if (!this.egoVehicleObject) {
             this.logger.warn("SceneManager: Ego vehicle not found. Cannot focus top-down view.");
-            // Optional: alert or notify user via UIManager
             if (this.uiManager) {
                 this.uiManager.showError("Ego vehicle not loaded. Cannot focus top-down view.");
             }
@@ -735,17 +659,12 @@ export class SceneManager {
 
         const egoPosition = this.egoVehicleObject.position.clone();
 
-        // 카메라 위치: Ego 차량 바로 위 (Y축으로 충분히 높게)
-        this.camera.position.set(egoPosition.x, egoPosition.y + 50, egoPosition.z); // 높이는 50으로 설정 (조정 가능)
-        this.camera.lookAt(egoPosition); // Ego 차량의 현재 위치를 바라봄
-
-        // Zoom 레벨은 차량 주변이 적절히 보이도록 설정 (2배 넓게)
-        // viewSize가 20m일 때, zoom 1이면 짧은 축 기준 20m 영역이 보임.
-        this.camera.zoom = 1; // 기졸 zoom = 2 에서 1로 변경하여 보이는 범위 2배 확장
+        this.camera.position.set(egoPosition.x, egoPosition.y + 50, egoPosition.z);
+        this.camera.lookAt(egoPosition);
+        this.camera.zoom = 1;
         
-        // OrthographicCamera의 경우 zoom 변경 후 projection matrix 업데이트 전에 left/right/top/bottom도 업데이트 필요
         const aspect = (this.canvas.clientWidth > 0 && this.canvas.clientHeight > 0) ? this.canvas.clientWidth / this.canvas.clientHeight : 1;
-        const viewSize = 20; // 카메라 생성 시 사용된 viewSize (또는 원하는 기본 시야 크기)
+        const viewSize = 20;
 
         this.camera.left = -aspect * viewSize / (2 * this.camera.zoom);
         this.camera.right = aspect * viewSize / (2 * this.camera.zoom);
@@ -755,7 +674,7 @@ export class SceneManager {
         this.camera.updateProjectionMatrix();
 
         if (this.controls) {
-            this.controls.target.copy(egoPosition); // 컨트롤러의 타겟도 Ego 위치로
+            this.controls.target.copy(egoPosition);
             this.controls.update();
         }
         this.logger.log("SceneManager: Camera focused on Ego vehicle (Top-Down View).");
@@ -771,22 +690,16 @@ export class SceneManager {
     }
 
     toggleReferenceLines() {
-        // 현재 가시성 상태를 반전하여 적용
         const newState = !this.referenceLinesVisible;
         this.setReferenceLinesVisible(newState);
         this.logger.log(`SceneManager: Reference lines visibility toggled to ${newState}`);
     }
 
     update() {
-        // ... existing code ...
-        
-        // LOD 업데이트
         const now = Date.now();
         if (now - this.lastLodUpdate > this.lodUpdateInterval) {
             this.updateLod();
             this.lastLodUpdate = now;
-
-            // 시야 밖 객체 숨김 처리
             this.updateRoadVisibility();
         }
     }
@@ -796,7 +709,6 @@ export class SceneManager {
         this.scene.traverse((object) => {
             if (object.userData.type === 'road') {
                 const distance = cameraPosition.distanceTo(object.position);
-                // GeometryBuilder에 카메라 거리 전달
                 if (this.geometryBuilder) {
                     this.geometryBuilder.updateLodLevel(distance);
                 }
@@ -807,7 +719,6 @@ export class SceneManager {
     updateRoadVisibility() {
         if (!this.camera || !this.roadContainer) return;
 
-        // 카메라 프러스텀 계산
         this.camera.updateMatrix();
         this.camera.updateMatrixWorld();
         const frustum = new THREE.Frustum();
@@ -817,11 +728,9 @@ export class SceneManager {
         let visibleCount = 0;
         this.roadContainer.children.forEach(child => {
             if (!child.userData || child.userData.type !== 'roadLine') {
-                // lane groups 포함 기타는 그대로
                 return;
             }
 
-            // boundingSphere 계산 (once and cache)
             if (!child.geometry.boundingSphere) {
                 child.geometry.computeBoundingSphere();
             }
@@ -836,16 +745,34 @@ export class SceneManager {
     }
 
     async loadOpenDrive(openDriveData) {
-        // ... existing code ...
+        if (!openDriveData || !openDriveData.roads) {
+            this.logger.error("Invalid OpenDRIVE data or no roads found from WASM parser.");
+            return;
+        }
+
+        this.clearScene();
+
         for (const road of openDriveData.roads) {
-            const cameraDistance = this.camera.position.length(); // 임시: 원점 기준 거리
-            const roadMesh = this.geometryBuilder.createRoadSegmentMesh(road, cameraDistance);
-            if (roadMesh) {
-                // addRoad 메서드에서 visibility 설정을 일관되게 처리하므로 여기서는 직접 추가하지 않고 addRoad를 사용합니다.
-                this.addRoad(road.id, roadMesh);
+            // Step 1: Process the raw data from the WASM parser.
+            // Convert the centerline points into an array of THREE.Vector3 objects.
+            if (road.centerline && road.centerline.length > 1) {
+                road.referencePoints = road.centerline.map(p => new THREE.Vector3(p.x, p.y, p.z || 0));
+            } else {
+                // If there are no points, we cannot draw the road. Skip to the next one.
+                this.logger.warn(`Road ${road.id} has insufficient centerline data. Skipping.`);
+                continue;
             }
 
-            // lane boundaries
+            const cameraDistance = this.camera.position.length();
+
+            // Step 2: Create a visual representation of the reference line for debugging.
+            const refLineGeometry = new THREE.BufferGeometry().setFromPoints(road.referencePoints);
+            const refLineMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 }); // Red line
+            const refLineMesh = new THREE.Line(refLineGeometry, refLineMaterial);
+            refLineMesh.name = `road_ref_line_${road.id}`;
+            this.addRoad(road.id, refLineMesh);
+
+            // Step 3: Call the GeometryBuilder functions with the processed road object.
             const surfaceMesh = this.geometryBuilder.buildRoadSurfaceMesh(road, cameraDistance);
             if (surfaceMesh) {
                 this.roadContainer.add(surfaceMesh);
@@ -857,12 +784,13 @@ export class SceneManager {
             }
 
             const markGroup = this.geometryBuilder.buildRoadMarkMeshes(road, cameraDistance);
-            if (markGroup) this.roadContainer.add(markGroup);
+            if (markGroup) {
+                this.roadContainer.add(markGroup);
+            }
         }
-        // ... existing code ...
 
-        // 모든 도로 추가 후 카메라 프레이밍
         this.updateCameraToFitAllRoads();
+        this.logger.log("Finished loading all roads from OpenDRIVE data.");
     }
 
     onMouseClick(event) {
@@ -879,7 +807,6 @@ export class SceneManager {
         if (intersects.length === 0) return;
 
         let obj = intersects[0].object;
-        // parent traversal to find roadLine
         while (obj && (!obj.userData || !obj.userData.roadId)) {
             obj = obj.parent;
         }

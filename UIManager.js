@@ -1,41 +1,93 @@
 import { DebugLogger } from './DebugLogger.js';
 
 export class UIManager {
-    constructor(uiElements, logger) {
+    constructor(logger, uiElements) {
         this.logger = logger;
         this.logger.log('Initializing UIManager...');
-
-        // UI 요소 참조 저장
-        this.fileInput = document.getElementById(uiElements.fileInputId);
-        this.loadDefaultBtn = document.getElementById(uiElements.loadDefaultBtnId);
-        this.toggleReferenceLinesBtn = document.getElementById(uiElements.toggleReferenceLinesBtnId);
-        this.roadList = document.getElementById(uiElements.roadListId);
-        this.loadingIndicator = document.getElementById(uiElements.loadingIndicatorId);
-        this.loadingProgress = this.loadingIndicator.querySelector('.loading-progress');
-
-        // UI 요소가 모두 존재하는지 확인
-        if (!this.fileInput || !this.loadDefaultBtn || !this.toggleReferenceLinesBtn || 
-            !this.roadList || !this.loadingIndicator || !this.loadingProgress) {
-            throw new Error('Required UI elements not found');
-        }
-
-        this.logger.log('UIManager initialization complete');
+        this.uiElements = uiElements;
+        this.setupEventListeners();
     }
 
-    showLoading(show) {
-        this.loadingIndicator.style.display = show ? 'flex' : 'none';
+    setupEventListeners() {
+        // 파일 입력 이벤트
+        this.uiElements.fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                this.logger.log(`File selected: ${file.name}`);
+                // 파일 처리 로직은 OpenDriveViewer에서 처리
+            }
+        });
+
+        // 기본 파일 로드 버튼
+        this.uiElements.loadDefaultBtn.addEventListener('click', () => {
+            this.logger.log('Loading default file...');
+            // 기본 파일 로드 로직은 OpenDriveViewer에서 처리
+        });
+
+        // Reference 라인 토글
+        this.uiElements.toggleReferenceLinesBtn.addEventListener('click', () => {
+            this.logger.log('Toggling reference lines...');
+            // Reference 라인 토글 로직은 OpenDriveViewer에서 처리
+        });
+
+        // 레인 타입 표시 제어
+        this.uiElements.showDrivingLanes.addEventListener('change', (e) => {
+            this.logger.log(`Driving lanes visibility: ${e.target.checked}`);
+            // 레인 표시 로직은 OpenDriveViewer에서 처리
+        });
+
+        this.uiElements.showBorderLanes.addEventListener('change', (e) => {
+            this.logger.log(`Border lanes visibility: ${e.target.checked}`);
+            // 레인 표시 로직은 OpenDriveViewer에서 처리
+        });
+
+        this.uiElements.showSidewalkLanes.addEventListener('change', (e) => {
+            this.logger.log(`Sidewalk lanes visibility: ${e.target.checked}`);
+            // 레인 표시 로직은 OpenDriveViewer에서 처리
+        });
     }
 
-    updateLoadingProgress(percent) {
-        this.loadingProgress.textContent = `${Math.round(percent)}%`;
+    showLoading() {
+        this.uiElements.loadingIndicator.style.display = 'flex';
+    }
+
+    hideLoading() {
+        this.uiElements.loadingIndicator.style.display = 'none';
+    }
+
+    updateRoadList(roads) {
+        const roadList = this.uiElements.roadList;
+        roadList.innerHTML = '';
+        
+        roads.forEach(road => {
+            const item = document.createElement('div');
+            item.className = 'road-item';
+            item.textContent = `Road ${road.id}`;
+            item.addEventListener('click', () => {
+                this.logger.log(`Selected road: ${road.id}`);
+                // 도로 선택 로직은 OpenDriveViewer에서 처리
+            });
+            roadList.appendChild(item);
+        });
     }
 
     showError(message) {
-        alert(message); // 임시로 alert 사용, 나중에 더 나은 UI로 개선
+        alert(message);
+    }
+
+    showLoading(show) {
+        this.uiElements.loadingIndicator.style.display = show ? 'flex' : 'none';
+    }
+
+    updateLoadingProgress(percent) {
+        const loadingProgress = this.uiElements.loadingIndicator.querySelector('.loading-progress');
+        if (loadingProgress) {
+            loadingProgress.textContent = `${Math.round(percent)}%`;
+        }
     }
 
     clearRoadList() {
-        this.roadList.innerHTML = '';
+        this.uiElements.roadList.innerHTML = '';
     }
 
     populateRoadList(roads) {
@@ -48,12 +100,12 @@ export class UIManager {
                 <span class="road-length">${road.length.toFixed(2)}m</span>
                 <span class="road-status">${road.status}</span>
             `;
-            this.roadList.appendChild(roadElement);
+            this.uiElements.roadList.appendChild(roadElement);
         });
     }
 
     updateRoadStatus(roadId, status) {
-        const roadElement = this.roadList.querySelector(`[data-road-id="${roadId}"]`);
+        const roadElement = this.uiElements.roadList.querySelector(`[data-road-id="${roadId}"]`);
         if (roadElement) {
             roadElement.querySelector('.road-status').textContent = status;
         }

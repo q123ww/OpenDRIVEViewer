@@ -147,4 +147,47 @@ input[type="file"] {
 
 #toggleReferenceLinesBtn:hover {
     background-color: #5a6268;
+}
+
+.control-panel {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+}
+
+.control-group {
+    margin-bottom: 15px;
+}
+
+.control-group h3 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.control-group h4 {
+    margin: 10px 0 5px 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.control-item {
+    margin: 5px 0;
+}
+
+.control-item label {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #444;
+    cursor: pointer;
+}
+
+.control-item input[type="checkbox"] {
+    margin-right: 8px;
 } 

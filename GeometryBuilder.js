@@ -5,8 +5,9 @@ import { DebugLogger } from './DebugLogger.js';
 const SKIP_ZERO_WIDTH = true;
 
 export class GeometryBuilder {
-    constructor(logger) {
+    constructor(logger, scene) {
         this.logger = logger;
+        this.scene = scene;
         this.logger.log('Initializing GeometryBuilder...');
 
         // LOD 레벨 정의
@@ -23,35 +24,35 @@ export class GeometryBuilder {
 
     createRoadSegmentMesh(road, cameraDistance) {
         try {
-            // 카메라 거리에 따른 LOD 레벨 업데이트
-            this.updateLodLevel(cameraDistance);
-
-            // 현재 LOD 레벨의 간격 가져오기
-            const interval = this.lodLevels[this.currentLodLevel].interval;
-
-            // 도로 지오메트리 생성
-            const roadGeometry = new THREE.BufferGeometry();
             const points = [];
-
-            // 도로의 각 지오메트리 세그먼트 처리
-            for (let gi = 0; gi < road.planView.geometries.length; gi++) {
-                const geometry = road.planView.geometries[gi];
-                let seg = this.calculateRoadPoints(geometry, interval).map(o=>o.point);
-                if (gi > 0 && seg.length > 0) {
+            
+            // 각 지오메트리 세그먼트 처리
+            for (const geometry of road.planView.geometries) {
+                const segmentPoints = this.calculateRoadPoints(geometry);
+                if (points.length > 0 && segmentPoints.length > 0) {
                     // 중복 첫 포인트 제거
-                    seg = seg.slice(1);
+                    points.push(...segmentPoints.slice(1));
+                } else {
+                    points.push(...segmentPoints);
                 }
-                points.push(...seg);
             }
 
             // 버퍼 지오메트리 생성
+            const roadGeometry = new THREE.BufferGeometry();
             roadGeometry.setFromPoints(points);
 
             // 도로 메시 생성
-            const roadMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+            const roadMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xffffff,  // 흰색
+                linewidth: 2
+            });
             const roadMesh = new THREE.Line(roadGeometry, roadMaterial);
             roadMesh.name = `road_${road.id}`;
-            roadMesh.userData = { type:'roadLine', roadId: road.id, length: road.length };
+            roadMesh.userData = { 
+                type: 'roadLine', 
+                roadId: road.id, 
+                length: road.length 
+            };
 
             return roadMesh;
         } catch (error) {
@@ -73,37 +74,31 @@ export class GeometryBuilder {
         }
     }
 
-    calculateRoadPoints(geometry, interval) {
-        const arr = [];
-        const { x, y, hdg, length, type, params = {}, s: geomStartS = 0 } = geometry;
+    calculateRoadPoints(geometry) {
+        const points = [];
+        const { x, y, hdg, length, type, params = {} } = geometry;
 
-        const numPoints = Math.max(2, Math.ceil(length / interval));
+        // 포인트 간격 설정 (도로 길이에 따라 조정)
+        const numPoints = Math.max(2, Math.ceil(length / 1.0));  // 1m 간격
+        const interval = length / (numPoints - 1);
 
-        for (let i = 0; i <= numPoints; i++) {
-            const sLocal = (i / numPoints) * length;
+        for (let i = 0; i < numPoints; i++) {
+            const s = i * interval;
             let point;
 
             switch (type) {
                 case 'line':
-                    point = this.calculateLinePoint(x, y, hdg, sLocal);
+                    point = this.calculateLinePoint(x, y, hdg, s);
                     break;
                 case 'arc': {
-                    const curvature = typeof params.curvature === 'number' ? params.curvature : 0;
-                    point = this.calculateArcPoint(x, y, hdg, sLocal, curvature);
+                    const curvature = params.curvature || 0;
+                    point = this.calculateArcPoint(x, y, hdg, s, curvature);
                     break;
                 }
                 case 'spiral': {
-                    const cs = typeof params.curvStart === 'number' ? params.curvStart : 0;
-                    const ce = typeof params.curvEnd === 'number' ? params.curvEnd : 0;
-                    point = this.calculateSpiralPoint(x, y, hdg, sLocal, cs, ce, length);
-                    break;
-                }
-                case 'poly3': {
-                    const a = typeof params.a === 'number' ? params.a : 0;
-                    const b = typeof params.b === 'number' ? params.b : 0;
-                    const c = typeof params.c === 'number' ? params.c : 0;
-                    const d = typeof params.d === 'number' ? params.d : 0;
-                    point = this.calculatePoly3Point(x, y, hdg, sLocal, a, b, c, d);
+                    const curvStart = params.curvStart || 0;
+                    const curvEnd = params.curvEnd || 0;
+                    point = this.calculateSpiralPoint(x, y, hdg, s, curvStart, curvEnd, length);
                     break;
                 }
                 default:
@@ -112,42 +107,30 @@ export class GeometryBuilder {
             }
 
             if (point && Number.isFinite(point.x)) {
-                arr.push({ point, s: geomStartS + sLocal });
+                points.push(point);
             }
         }
 
-        return arr;
+        return points;
     }
 
     calculateLinePoint(x, y, hdg, s) {
         const px = x + s * Math.cos(hdg);
         const py = y + s * Math.sin(hdg);
-        return new THREE.Vector3(px, 0, -py);
+        return new THREE.Vector3(px, 0, py);
     }
 
     calculateArcPoint(x, y, hdg, s, curvature) {
-        const EPS = 1e-9;
-        if (!curvature || Math.abs(curvature) < EPS) {
+        if (!curvature || Math.abs(curvature) < 1e-9) {
             return this.calculateLinePoint(x, y, hdg, s);
         }
 
-        // 적분 간격 설정: 0.5 m 이하, 최소 20 스텝
-        const targetStep = 0.5;
-        let steps = Math.ceil(s / targetStep);
-        steps = Math.max(steps, 20);
-        const ds = s / steps;
-
-        let posX = x;
-        let posY = y;
-        let theta = hdg; // 현재 전역 헤딩
-
-        for (let i = 0; i < steps; i++) {
-            posX += ds * Math.cos(theta);
-            posY += ds * Math.sin(theta);
-            theta += curvature * ds; // 일정 곡률
-        }
-
-        return new THREE.Vector3(posX, 0, -posY);
+        const radius = 1 / curvature;
+        const angle = s * curvature;
+        const px = x + radius * (Math.sin(hdg + angle) - Math.sin(hdg));
+        const py = y + radius * (-Math.cos(hdg + angle) + Math.cos(hdg));
+        
+        return new THREE.Vector3(px, 0, py);
     }
 
     calculateSpiralPoint(x, y, hdg, s, curvStart, curvEnd, totalLength) {
@@ -155,240 +138,186 @@ export class GeometryBuilder {
             return this.calculateLinePoint(x, y, hdg, s);
         }
 
-        // 간단한 수치 적분으로 클로소이드 근사 (Euler integration)
-        // 정확도 향상을 위해 0.5 m 이하 간격으로 적분 (최소 40 스텝, 최대 2000 스텝)
-        const targetStep = 0.5;                    // 적분 간격 [m]
-        let steps = Math.ceil(s / targetStep);
-        steps = Math.min(Math.max(steps, 40), 2000); // 40 ≤ steps ≤ 2000
+        // 수치 적분으로 클로소이드 근사
+        const steps = Math.max(20, Math.ceil(s / 0.5));  // 0.5m 간격
         const ds = s / steps;
+        
         let posX = x;
         let posY = y;
-        let theta = hdg; // 현재 헤딩 (전역)
+        let theta = hdg;
 
         for (let i = 0; i < steps; i++) {
             const si = i * ds;
             const curvature = curvStart + (curvEnd - curvStart) * (si / totalLength);
-            // advance position
+            
             posX += ds * Math.cos(theta);
             posY += ds * Math.sin(theta);
-            // update heading for next step (kappa * ds)
             theta += curvature * ds;
         }
 
-        return new THREE.Vector3(posX, 0, -posY);
-    }
-
-    // poly3: y(s) = a + b*s + c*s^2 + d*s^3 (OpenDRIVE 정의)
-    // 로컬 좌표계를 전역으로 변환
-    calculatePoly3Point(x, y, hdg, s, a, b, c, d) {
-        const u = s; // 로컬 s 축 (전진 방향)
-        const v = a + b * u + c * u * u + d * u * u * u; // 횡방향 offset
-
-        // 로컬 (u,v) → 전역 (px, py)
-        const px = x + u * Math.cos(hdg) - v * Math.sin(hdg);
-        const py = y + u * Math.sin(hdg) + v * Math.cos(hdg);
-
-        return new THREE.Vector3(px, 0, -py);
+        return new THREE.Vector3(posX, 0, posY);
     }
 
     buildLaneMeshes(road, cameraDistance) {
         try {
-            this.updateLodLevel(cameraDistance);
-            const interval = this.lodLevels[this.currentLodLevel].interval;
-
-            // reference samples with s values
-            const refArr=[];
+            const points = [];
+            
+            // Reference 라인 포인트 계산
             for (const geometry of road.planView.geometries) {
-                const arr = this.calculateRoadPoints(geometry, interval);
-                if (refArr.length && arr.length) {
-                    refArr.push(...arr.slice(1));
+                const segmentPoints = this.calculateRoadPoints(geometry);
+                if (points.length > 0 && segmentPoints.length > 0) {
+                    points.push(...segmentPoints.slice(1));
                 } else {
-                    refArr.push(...arr);
+                    points.push(...segmentPoints);
                 }
             }
-            if (refArr.length===0) return null;
+
+            if (points.length === 0) return null;
+
+            // 이전/다음 포인트 정보 추가
+            for (let i = 0; i < points.length; i++) {
+                points[i].prevPoint = i > 0 ? points[i-1] : null;
+                points[i].nextPoint = i < points.length - 1 ? points[i+1] : null;
+            }
 
             const laneSections = road.laneSections || [];
-
-            // Collect unique lane IDs across all laneSections (excluding center lane 0)
-            const laneIdSet = new Set();
-            laneSections.forEach(ls=>{
-                ls.lanes.forEach(l=>{ if(l.id!==0) laneIdSet.add(l.id); });
-            });
-            if (laneIdSet.size===0) return null;
-
             const group = new THREE.Group();
             group.name = `road_${road.id}_lanes`;
 
-            laneIdSet.forEach(laneId=>{
-                // Determine representative laneType from first occurrence
-                let laneType='unknown';
-                for(const ls of laneSections){
-                    const match = ls.lanes.find(l=>l.id===laneId);
-                    if(match){ laneType=match.type; break; }
-                }
+            // 각 레인에 대한 메시 생성
+            laneSections.forEach(section => {
+                section.lanes.forEach(lane => {
+                    if (lane.id === 0) return; // 중앙 레인 제외
 
-                const lanePts=[];
-                for (const sample of refArr) {
-                    const offset = this.computeLaneCenterOffset(laneId, laneSections, sample.s, road.laneOffset || []);
-                    const pt = this.offsetPoints([sample.point], offset)[0];
-                    lanePts.push(pt);
-                }
-                const geom = new THREE.BufferGeometry().setFromPoints(lanePts);
-                const mat = new THREE.LineBasicMaterial({ color: laneId>0?0x00ff00:0x0000ff });
-                const line = new THREE.Line(geom, mat);
-                line.userData = {type:'laneCenter', laneId: laneId, roadId: road.id, laneType: laneType};
-                group.add(line);
+                    const lanePoints = [];
+                    points.forEach(point => {
+                        const offset = this.computeLaneCenterOffset(lane.id, laneSections, point.s, road.laneOffset || []);
+                        const lanePoint = this.offsetPoint(point, offset);
+                        if (lanePoint && Number.isFinite(lanePoint.x)) {
+                            lanePoints.push(lanePoint);
+                        }
+                    });
+
+                    if (lanePoints.length < 2) return; // 최소 2개의 포인트 필요
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints(lanePoints);
+                    const material = new THREE.LineBasicMaterial({ 
+                        color: lane.id > 0 ? 0x0000ff : 0x00ff00,  // 양수 ID는 파란색, 음수 ID는 초록색
+                        linewidth: 1
+                    });
+                    const line = new THREE.Line(geometry, material);
+                    line.name = `lane_${road.id}_${lane.id}`;
+                    line.userData = {
+                        type: 'laneLine',
+                        roadId: road.id,
+                        laneId: lane.id,
+                        laneType: lane.type
+                    };
+                    group.add(line);
+                });
             });
 
-            // Fast path: if lane objects already contain precomputed centerline arrays (from WASM),
-            // build simple Line meshes directly and skip offset/width math.
-            if (laneSections[0].lanes && laneSections[0].lanes[0] && laneSections[0].lanes[0].centerline) {
-                const groupCenter = new THREE.Group();
-                groupCenter.name = `road_${road.id}_lanes_centerline`;
-                for (const ls of laneSections) {
-                    for (const lane of ls.lanes) {
-                        if(lane.id===0) continue;
-                        if(!lane.centerline || lane.centerline.length<2) continue;
-                        const pts = lane.centerline.map(p=>new THREE.Vector3(p.x, p.y, -p.z));
-                        const geom = new THREE.BufferGeometry().setFromPoints(pts);
-                        const mat  = new THREE.LineBasicMaterial({color:0x00ffff});
-                        const line = new THREE.Line(geom, mat);
-                        line.name = `lane_center_${road.id}_${lane.id}`;
-                        line.userData={type:'laneCenter', roadId:road.id, laneId:lane.id};
-                        groupCenter.add(line);
-                    }
-                }
-                return groupCenter;
-            }
-
             return group;
-        } catch (err) {
-            this.logger.error('buildLaneMeshes error', err);
+        } catch (error) {
+            this.logger.error(`Error creating lane meshes for road ${road.id}:`, error);
             return null;
         }
     }
 
-    // helper to offset polyline in XY plane by distance (positive left side)
-    offsetPoints(points, offset) {
-        const offsetPts = [];
-        for (let i=0;i<points.length;i++){
-            const p = points[i];
-            // compute tangent
-            let dir;
-            if (points.length===1){
-                dir = new THREE.Vector3(1,0,0); // arbitrary X direction
-            } else if (i===0) {
-                dir = new THREE.Vector3().subVectors(points[i+1], p);
-            } else if (i===points.length-1){
-                dir = new THREE.Vector3().subVectors(p, points[i-1]);
-            } else {
-                dir = new THREE.Vector3().subVectors(points[i+1], points[i-1]);
-            }
-            dir.y=0; // ensure horizontal
-            dir.normalize();
-            // normal vector in XZ plane rotated 90deg (left is +Z?). For XY to XZ mapping, with Z=-y.
-            const normal = new THREE.Vector3(-dir.z, 0, dir.x); // left-hand normal
-            const newPt = new THREE.Vector3().copy(p).addScaledVector(normal, offset);
-            offsetPts.push(newPt);
+    // 단일 포인트 오프셋 계산
+    offsetPoint(point, offset) {
+        // 이전 포인트와 다음 포인트를 사용하여 접선 방향 계산
+        const tangent = new THREE.Vector3(1, 0, 0);  // 기본 접선 방향
+        const normal = new THREE.Vector3(0, 0, 1);   // 기본 법선 방향
+        
+        // 포인트의 접선 방향 계산
+        if (point.prevPoint && point.nextPoint) {
+            tangent.subVectors(point.nextPoint, point.prevPoint).normalize();
+            normal.set(-tangent.z, 0, tangent.x);  // 수정된 법선 계산
         }
-        return offsetPts;
+        
+        // 오프셋 적용
+        return new THREE.Vector3(
+            point.x + normal.x * offset,
+            point.y,
+            point.z + normal.z * offset
+        );
+    }
+
+    // 라인 표시 제어를 위한 메서드들
+    setReferenceLinesVisible(visible = true) {
+        this.scene.traverse(object => {
+            if (object.userData && object.userData.type === 'roadLine') {
+                object.visible = visible;
+            }
+        });
+    }
+
+    setLaneLinesVisible(visible = true) {
+        this.scene.traverse(object => {
+            if (object.userData && object.userData.type === 'laneLine') {
+                object.visible = visible;
+            }
+        });
+    }
+
+    setLaneTypeVisible(laneType, visible = true) {
+        this.scene.traverse(object => {
+            if (object.userData && 
+                object.userData.type === 'laneLine' && 
+                object.userData.laneType === laneType) {
+                object.visible = visible;
+            }
+        });
     }
 
     buildRoadSurfaceMesh(road, cameraDistance) {
         try {
-            this.updateLodLevel(cameraDistance);
-            const interval = this.lodLevels[this.currentLodLevel].interval;
-
-            // reference line sample points
-            const refArr = [];
-            for (const geom of road.planView.geometries) {
-                const pts = this.calculateRoadPoints(geom, interval);
-                if (refArr.length && pts.length) {
-                    refArr.push(...pts.slice(1));
-                    } else { 
-                    refArr.push(...pts);
-                }
-            }
-            if (refArr.length < 2) return null;
-
-            // build arrays of Vector3 and global s
-            const refPts = refArr.map(o=>o.point);
-            const sVals = refArr.map(o=>o.s);
-
-            const laneSections = road.laneSections || [];
-
-            // helper to compute cumulative widths at global s
-            const getWidths = (sGlobal) => {
-                const ls = this.findLaneSection(laneSections, sGlobal);
-                if (!ls) return {left:3.5, right:3.5};
-                const leftLanes = ls.lanes.filter(l=>l.id>0).sort((a,b)=>a.id-b.id);
-                const rightLanes = ls.lanes.filter(l=>l.id<0).sort((a,b)=>b.id-a.id);
-                let left=0,right=0;
-                leftLanes.forEach(l=>{
-                    if(l.type==='none') return;
-                    let w = this.getLaneWidthAt(l.widthSeg, sGlobal - ls.s);
-                    if (SKIP_ZERO_WIDTH && w === 0) return;
-                    left += w;
-                });
-                rightLanes.forEach(l=>{
-                    if(l.type==='none') return;
-                    let w = this.getLaneWidthAt(l.widthSeg, sGlobal - ls.s);
-                    if (SKIP_ZERO_WIDTH && w === 0) return;
-                    right += w;
-                });
-                const widthProblem = !Number.isFinite(left) || !Number.isFinite(right) || left < 0 || right < 0;
-                if (widthProblem || left > 60 || right > 60) {
-                    // 심각한 오류 – 데이터 손상 가능성
-                    this.logger.error(`Abnormal width on road ${road.id} at s=${sGlobal.toFixed(1)} left=${left} right=${right}`);
-                } else if (left > 30 || right > 30) {
-                    // 차로 수가 매우 많은 구간 – 정보성 경고로 처리
-                    this.logger.warn(`Very wide carriageway on road ${road.id} at s=${sGlobal.toFixed(1)} left=${left} right=${right}`);
-                }
-                return {left, right};
-            };
-
-            const leftPts = [];
-            const rightPts = [];
-            for (let i=0;i<refPts.length;i++){
-                const widths = getWidths(sVals[i]);
-                const laneOff = this.getLaneOffsetAt(road.laneOffset || [], sVals[i]);
-                leftPts.push(this.offsetPoints([refPts[i]], laneOff + widths.left)[0]);
-                rightPts.push(this.offsetPoints([refPts[i]], laneOff - widths.right)[0]);
+            if (!road || !road.referencePoints || road.referencePoints.length < 2) {
+                this.logger.warn(`Road ${road.id} has insufficient reference points for surface mesh.`);
+                return null;
             }
 
-            const vertexCount = refPts.length * 2;
-            const positions = new Float32Array(vertexCount * 3);
-
-            for (let i = 0; i < refPts.length; i++) {
-                const lp = leftPts[i];
-                const rp = rightPts[i];
-                positions.set([lp.x, lp.y, lp.z], i * 6);
-                positions.set([rp.x, rp.y, rp.z], i * 6 + 3);
+            const roadWidth = road.lanes ? (road.lanes.left.length + road.lanes.right.length) * 3.5 : 7; // Approximate width
+            const leftBoundary = this.offsetPoints(road.referencePoints, roadWidth / 2);
+            const rightBoundary = this.offsetPoints(road.referencePoints, -roadWidth / 2);
+            
+            if (leftBoundary.length < 2 || rightBoundary.length < 2) {
+                return null;
             }
+
+            const vertices = [];
+            for (let i = 0; i < leftBoundary.length; i++) {
+                vertices.push(leftBoundary[i].x, leftBoundary[i].y, leftBoundary[i].z);
+                vertices.push(rightBoundary[i].x, rightBoundary[i].y, rightBoundary[i].z);
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
 
             const indices = [];
-            for (let i = 0; i < refPts.length - 1; i++) {
+            for (let i = 0; i < leftBoundary.length - 1; i++) {
                 const a = i * 2;
                 const b = a + 1;
                 const c = a + 2;
                 const d = a + 3;
-                // first triangle a,c,b ; second c,d,b
-                indices.push(a, c, b, c, d, b);
+                indices.push(a, b, c);
+                indices.push(b, d, c);
             }
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
 
-            const geom = new THREE.BufferGeometry();
-            geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            geom.setIndex(indices);
-            geom.computeVertexNormals();
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x505050,
+                side: THREE.DoubleSide,
+                wireframe: false
+            });
 
-            const mat = new THREE.MeshStandardMaterial({ color: 0x333333, side: THREE.DoubleSide });
-            const mesh = new THREE.Mesh(geom, mat);
-            mesh.name = `roadSurface_${road.id}`;
-            mesh.userData = { type: 'roadSurface', roadId: road.id };
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.name = `road_surface_${road.id}`;
             return mesh;
-        } catch (err) {
-            this.logger.error('buildRoadSurfaceMesh error', err);
+        } catch (error) {
+            this.logger.error(`buildRoadSurfaceMesh error`, error);
             return null;
         }
     }
@@ -480,73 +409,54 @@ export class GeometryBuilder {
         return acc + laneOffsetVal;
     }
 
-    buildRoadMarkMeshes(road, cameraDistance){
-        try{
-            this.updateLodLevel(cameraDistance);
-            const interval=this.lodLevels[this.currentLodLevel].interval;
+    buildRoadMarkMeshes(road, cameraDistance) {
+        try {
+            const markGroup = new THREE.Group();
+            markGroup.name = `road_marks_${road.id}`;
 
-            // sample reference
-            const refArr=[];
-            for(const geom of road.planView.geometries){
-                const arr=this.calculateRoadPoints(geom,interval);
-                if(refArr.length&&arr.length) refArr.push(...arr.slice(1));
-                else refArr.push(...arr);
+            if (!road.roadMarks || !Array.isArray(road.roadMarks)) {
+                return null;
             }
-            if(refArr.length===0) return null;
 
-            const laneSections=road.laneSections||[];
-            if(!laneSections.length) return null;
+            for (const mark of road.roadMarks) {
+                if (!mark.points || mark.points.length < 2) continue;
 
-            const group=new THREE.Group();
-            group.name=`road_${road.id}_marks`;
+                // Ensure points are THREE.Vector3 objects
+                const points = mark.points.map(p => new THREE.Vector3(p.x, p.y, p.z || 0));
 
-            const addBoundary=(boundaryOffsetArr, markInfo)=>{
-                const geom=new THREE.BufferGeometry().setFromPoints(boundaryOffsetArr);
-                let material;
-                if(markInfo&&markInfo.type&&markInfo.type.includes('broken')){
-                    material=new THREE.LineDashedMaterial({color:0xffffff,dashSize:3,gapSize:3});
-                }else{
-                    material=new THREE.LineBasicMaterial({color:0xffffff});
-                }
-                const line=new THREE.Line(geom,material);
-                if(material instanceof THREE.LineDashedMaterial){
-                    line.computeLineDistances();
-                }
-                line.userData={type:'laneMark',roadId:road.id};
-                group.add(line);
-            };
+                const markMaterial = new THREE.LineBasicMaterial({
+                    color: 0xffffff,
+                    linewidth: 1,
+                    transparent: true,
+                    opacity: 0.8
+                });
 
-            // iterate through sample points to build offsets arrays for left/right boundaries of each lane
-            const firstLsLanes=laneSections[0].lanes;
-            for(const lane of firstLsLanes){
-                if(lane.id===0) continue; // center lane no boundary
-                const boundaryPts=[];
-                for(let idx=0; idx<refArr.length; idx++){
-                    const sample=refArr[idx];
-                    const centerOffset=this.computeLaneCenterOffset(lane.id,laneSections,sample.s, road.laneOffset || []);
-                    const halfWidth=this.getLaneWidthAt(lane.widthSeg, sample.s - this.findLaneSection(laneSections,sample.s).s)/2;
-                    const bOffset = lane.id>0 ? centerOffset-halfWidth : centerOffset+halfWidth;
+                for (let i = 0; i < points.length - 1; i++) {
+                    const p1 = points[i];
+                    const p2 = points[i+1];
+                    if (!p1 || !p2) continue; // Safety check
 
-                    // tangent dir
-                    let dir;
-                    if (idx===0) {
-                        dir = new THREE.Vector3().subVectors(refArr[idx+1].point, sample.point);
-                    } else if (idx===refArr.length-1){
-                        dir = new THREE.Vector3().subVectors(sample.point, refArr[idx-1].point);
-                    } else {
-                        dir = new THREE.Vector3().subVectors(refArr[idx+1].point, refArr[idx-1].point);
+                    const dir = new THREE.Vector3().subVectors(p2, p1);
+                    const len = dir.length();
+                    dir.normalize();
+
+                    const dashSize = 0.5;
+                    const gapSize = 0.5;
+                    const lineLength = dashSize + gapSize;
+                    
+                    for (let j = 0; j < len; j += lineLength) {
+                        const start = new THREE.Vector3().addVectors(p1, dir.clone().multiplyScalar(j));
+                        const end = new THREE.Vector3().addVectors(start, dir.clone().multiplyScalar(Math.min(dashSize, len - j)));
+                        
+                        const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+                        const line = new THREE.Line(geom, markMaterial);
+                        markGroup.add(line);
                     }
-                    dir.y=0; dir.normalize();
-                    const normal=new THREE.Vector3(-dir.z,0,dir.x);
-                    const pt=new THREE.Vector3().copy(sample.point).addScaledVector(normal,bOffset);
-                    boundaryPts.push(pt);
                 }
-                addBoundary(boundaryPts, lane.roadMark);
             }
-
-            return group;
-        }catch(err){
-            this.logger.error('buildRoadMarkMeshes error',err);
+            return markGroup;
+        } catch (error) {
+            this.logger.error(`buildRoadMarkMeshes error`, error);
             return null;
         }
     }
@@ -555,5 +465,96 @@ export class GeometryBuilder {
         this.roadContainer.traverse(o=>{
             o.visible = o.userData?.type === 'referenceLine' ? true : !visible;
         });
+    }
+
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    buildRoadReferenceLines(road, roadId) {
+        try {
+            const points = [];
+            const referencePoints = [];
+            
+            // 각 지오메트리 세그먼트 처리
+            for (const geometry of road.planView.geometries) {
+                const segmentPoints = this.calculateRoadPoints(geometry);
+                if (points.length > 0 && segmentPoints.length > 0) {
+                    points.push(...segmentPoints.slice(1));
+                } else {
+                    points.push(...segmentPoints);
+                }
+            }
+
+            if (points.length < 2) {
+                this.logger.warn(`Road ${roadId} has insufficient points for reference line`);
+                return null;
+            }
+
+            // 버퍼 지오메트리 생성
+            const roadGeometry = new THREE.BufferGeometry();
+            roadGeometry.setFromPoints(points);
+
+            // 도로 메시 생성
+            const roadMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xff0000,  // 빨간색
+                linewidth: 2
+            });
+            const roadMesh = new THREE.Line(roadGeometry, roadMaterial);
+            roadMesh.name = `road_ref_group_${roadId}`;
+            roadMesh.userData = { 
+                type: 'referenceLine', 
+                roadId: roadId, 
+                length: road.length 
+            };
+
+            return {
+                roadLineGroup: roadMesh,
+                referencePoints: points
+            };
+        } catch (error) {
+            this.logger.error(`Error creating reference line for road ${roadId}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Offsets a line of points by a specified distance perpendicular to the direction of the line segments.
+     * @param {THREE.Vector3[]} points - The original points of the line.
+     * @param {number} offset - The distance to offset the points. Positive values offset to the left, negative to the right.
+     * @returns {THREE.Vector3[]} The new array of offset points.
+     */
+    offsetPoints(points, offset) {
+        if (!points || points.length < 2) {
+            return [];
+        }
+
+        const offsetPoints = [];
+
+        for (let i = 0; i < points.length; i++) {
+            let dir;
+            if (i === 0) {
+                // First point
+                dir = new THREE.Vector3().subVectors(points[i + 1], points[i]);
+            } else if (i === points.length - 1) {
+                // Last point
+                dir = new THREE.Vector3().subVectors(points[i], points[i - 1]);
+            } else {
+                // Middle points: average the direction of the two segments
+                const dir1 = new THREE.Vector3().subVectors(points[i], points[i - 1]);
+                const dir2 = new THREE.Vector3().subVectors(points[i + 1], points[i]);
+                dir = new THREE.Vector3().addVectors(dir1, dir2).multiplyScalar(0.5);
+            }
+
+            dir.normalize();
+            const normal = new THREE.Vector3(-dir.y, dir.x, 0); // Perpendicular vector in 2D
+            normal.multiplyScalar(offset);
+
+            const newPoint = new THREE.Vector3().addVectors(points[i], normal);
+            offsetPoints.push(newPoint);
+        }
+
+        return offsetPoints;
     }
 } 

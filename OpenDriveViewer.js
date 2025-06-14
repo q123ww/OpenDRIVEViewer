@@ -1,77 +1,169 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js';
 import { SceneManager } from './SceneManager.js?v=20250614c';
 import { UIManager } from './UIManager.js';
 import { GeometryBuilder } from './GeometryBuilder.js';
 import { DebugLogger } from './DebugLogger.js';
-import OpenDriveWasmModule from './OpenDriveWasm.js?v=20250614d';
+import loadWasmModule from './OpenDriveWasm.js?v=20250614e';
 // THREE는 SceneManager 등에서 import 하므로 여기서는 직접 import 필요 없을 수 있음
 // import * as THREE from 'three'; 
 
 export class OpenDriveViewer {
-    constructor(canvasId, uiElements) {
+    constructor() {
         this.logger = new DebugLogger('OpenDriveViewer');
         this.logger.log('Initializing OpenDriveViewer...');
 
-        // UI 요소 초기화
-        this.uiManager = new UIManager(uiElements, this.logger);
-        
-        // 씬 매니저 초기화 (UIManager 전달)
-        this.sceneManager = new SceneManager(canvasId, this.logger, this.uiManager);
-        this.sceneManager.initScene();
-        this.sceneManager.startAnimationLoop();
-        
-        // 지오메트리 빌더 초기화
-            this.geometryBuilder = new GeometryBuilder(this.logger);
-        // SceneManager와 연결
-        this.sceneManager.geometryBuilder = this.geometryBuilder;
-        
-        // WASM 초기화
-        this.wasm = null;
-        const wasmOpts = {
-            locateFile: (path, prefix) => {
-                if (path.endsWith('.wasm')) {
-                    return `${path}?v=20250613`;
+        try {
+            // THREE.js 초기화
+            this.scene = new THREE.Scene();
+            this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            this.renderer = new THREE.WebGLRenderer({ antialias: true });
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(this.renderer.domElement);
+
+            // 컨트롤 초기화 - OrbitControls를 직접 사용
+            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            this.controls.enableDamping = true;
+            this.controls.dampingFactor = 0.05;
+
+            // UI 요소 정의
+            const uiElements = {
+                fileInput: document.getElementById('fileInput'),
+                loadDefaultBtn: document.getElementById('loadDefaultBtn'),
+                toggleReferenceLinesBtn: document.getElementById('toggleReferenceLinesBtn'),
+                roadList: document.getElementById('roadList'),
+                loadingIndicator: document.getElementById('loadingIndicator'),
+                showReferenceLines: document.getElementById('showReferenceLines'),
+                showLaneLines: document.getElementById('showLaneLines'),
+                showDrivingLanes: document.getElementById('showDrivingLanes'),
+                showBorderLanes: document.getElementById('showBorderLanes'),
+                showSidewalkLanes: document.getElementById('showSidewalkLanes')
+            };
+
+            // UI 요소 확인
+            for (const [key, element] of Object.entries(uiElements)) {
+                if (!element) {
+                    throw new Error(`Required UI element not found: ${key}`);
                 }
-                return prefix + path;
             }
-        };
-        OpenDriveWasmModule(wasmOpts).then(mod => {
-            this.wasm = mod;
-            if (typeof mod.parseXodr !== 'function') {
-                try {
-                    mod.parseXodr = mod.cwrap('parseXodr', 'string', ['string']);
-                    this.logger.log('parseXodr bound via cwrap fallback');
-                } catch (e) {
-                    this.logger.error('Failed to bind parseXodr via cwrap', e);
-                }
+
+            // UIManager 초기화
+            this.uiManager = new UIManager(this.logger, uiElements);
+
+            // SceneManager 초기화
+            this.sceneManager = new SceneManager('viewerContainer', this.logger, this.uiManager);
+            this.sceneManager.startAnimationLoop();
+
+            // GeometryBuilder 초기화 (scene 전달)
+            this.geometryBuilder = new GeometryBuilder(this.logger, this.scene);
+            // SceneManager와 연결
+            this.sceneManager.geometryBuilder = this.geometryBuilder;
+            
+            // 이벤트 리스너 설정
+            this.setupEventListeners();
+            
+            // 초기 카메라 위치 설정
+            this.camera.position.set(0, 50, 50);
+            this.camera.lookAt(0, 0, 0);
+
+            this.logger.log('OpenDriveViewer initialization complete');
+        } catch (error) {
+            this.logger.error('Failed to initialize OpenDriveViewer:', error);
+            console.error('Error stack:', error.stack);
+            throw new Error('An unexpected error occurred');
+        }
+    }
+
+    async initializeWasm() {
+        this.logger.log('Starting WASM module initialization...');
+        try {
+            // Emscripten Module object. locateFile is crucial for finding the .wasm binary.
+            const moduleConfig = {
+                locateFile: (path, prefix) => {
+                    if (path.endsWith('.wasm')) {
+                        this.logger.log(`WASM binary path requested: ${prefix}${path}`);
+                        // This path should be relative to the HTML file loading the scripts.
+                        return `./OpenDriveWasm.wasm`;
+                    }
+                    return prefix + path;
+                },
+                print: (text) => { if (text) this.logger.log(`[WASM] ${text}`); },
+                printErr: (text) => { if (text) this.logger.error(`[WASM] ${text}`); },
+            };
+
+            // Call the factory function from the Emscripten-generated JS file.
+            // It returns a promise that resolves with the module instance.
+            this.wasm = await loadWasmModule(moduleConfig);
+            this.logger.log('WASM factory function completed, module instance created.');
+
+            // Verify that the exported function 'parseXodr' is available.
+            if (typeof this.wasm.parseXodr === 'function') {
+                this.logger.log('WASM function "parseXodr" is available.');
+            } else {
+                 // Emscripten can sometimes hide functions behind cwrap or an underscore.
+                 // This provides a fallback if the function isn't directly on the module.
+                 this.logger.warn('Direct access to "parseXodr" not found. Attempting fallback with cwrap.');
+                 try {
+                    // signature: 'name', return type, [arg types]
+                    this.wasm.parseXodr = this.wasm.cwrap('parseXodr', 'string', ['string']);
+                    this.logger.log('Successfully bound "parseXodr" using cwrap.');
+                 } catch(e) {
+                     this.logger.error('cwrap failed to bind "parseXodr".', e);
+                     throw new Error('WASM module is missing the "parseXodr" function and cwrap fallback failed.');
+                 }
             }
-            this.logger.log('WASM module ready');
-        }).catch(err => {
-            this.logger.error('Failed to load WASM module', err);
-        });
-        
-        // 이벤트 리스너 설정
-        this.setupEventListeners();
-        
-        this.logger.log('OpenDriveViewer initialization complete');
+
+            this.logger.log('WASM module is ready to use.');
+        } catch (err) {
+            this.logger.error('A critical error occurred during WASM initialization.', err);
+            console.error('WASM loading error details:', err);
+            throw err; // Re-throw to be caught by the outer try-catch in index.html
+        }
     }
 
     setupEventListeners() {
         // 파일 입력 이벤트
-        this.uiManager.fileInput.addEventListener('change', (event) => {
+        this.uiManager.uiElements.fileInput.addEventListener('change', (event) => {
             const file = event.target.files[0];
             if (file) {
+                this.logger.log(`File selected: ${file.name}`);
                 this.loadFile(file);
             }
         });
 
-        // 기본 파일 로드 버튼 이벤트
-        this.uiManager.loadDefaultBtn.addEventListener('click', () => {
+        // 기본 파일 로드 버튼
+        this.uiManager.uiElements.loadDefaultBtn.addEventListener('click', () => {
+            this.logger.log('Loading default file...');
             this.loadDefaultFile();
         });
 
-        // 참조선 토글 버튼 이벤트
-        this.uiManager.toggleReferenceLinesBtn.addEventListener('click', () => {
+        // Reference 라인 토글
+        this.uiManager.uiElements.toggleReferenceLinesBtn.addEventListener('click', () => {
+            this.logger.log('Toggling reference lines...');
             this.sceneManager.toggleReferenceLines();
+        });
+
+        // 레인 타입 표시 제어
+        this.uiManager.uiElements.showDrivingLanes.addEventListener('change', (e) => {
+            this.logger.log(`Driving lanes visibility: ${e.target.checked}`);
+            this.geometryBuilder.setLaneTypeVisible('driving', e.target.checked);
+        });
+
+        this.uiManager.uiElements.showBorderLanes.addEventListener('change', (e) => {
+            this.logger.log(`Border lanes visibility: ${e.target.checked}`);
+            this.geometryBuilder.setLaneTypeVisible('border', e.target.checked);
+        });
+
+        this.uiManager.uiElements.showSidewalkLanes.addEventListener('change', (e) => {
+            this.logger.log(`Sidewalk lanes visibility: ${e.target.checked}`);
+            this.geometryBuilder.setLaneTypeVisible('sidewalk', e.target.checked);
+        });
+
+        // 창 크기 변경 이벤트
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
     }
 
@@ -431,6 +523,36 @@ export class OpenDriveViewer {
         if (this.egoVehicleInfo && this.sceneManager.egoVehicleObject) {
             this.sceneManager.focusEgoTopDownView(); 
         }
+    }
+
+    initControls() {
+        // Reference 라인 표시 제어
+        document.getElementById('showReferenceLines').addEventListener('change', (e) => {
+            this.geometryBuilder.setReferenceLinesVisible(e.target.checked);
+        });
+
+        // 레인 라인 표시 제어
+        document.getElementById('showLaneLines').addEventListener('change', (e) => {
+            this.geometryBuilder.setLaneLinesVisible(e.target.checked);
+        });
+
+        // 레인 타입별 표시 제어
+        document.getElementById('showDrivingLanes').addEventListener('change', (e) => {
+            this.geometryBuilder.setLaneTypeVisible('driving', e.target.checked);
+        });
+
+        document.getElementById('showBorderLanes').addEventListener('change', (e) => {
+            this.geometryBuilder.setLaneTypeVisible('border', e.target.checked);
+        });
+
+        document.getElementById('showSidewalkLanes').addEventListener('change', (e) => {
+            this.geometryBuilder.setLaneTypeVisible('sidewalk', e.target.checked);
+        });
+    }
+
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
+        this.renderer.render(this.scene, this.camera);
     }
 }
 
