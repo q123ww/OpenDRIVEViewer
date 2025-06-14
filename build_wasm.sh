@@ -45,26 +45,63 @@ INCLUDE_PATHS=" \
 
 echo "Starting WASM build..."
 
-# 빌드 옵션
-emcc ${CPP_SOURCES} ${INCLUDE_PATHS} \
+# Determine CPU core count for parallel build
+if command -v nproc &>/dev/null; then
+    CORES=$(nproc)
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    CORES=$(sysctl -n hw.ncpu)
+else
+    CORES=16
+fi
+
+echo "Using $CORES parallel jobs"
+
+# Convert CPP_SOURCES string into array (word-split by whitespace)
+read -r -a SRC_ARRAY <<< "$CPP_SOURCES"
+TOTAL=${#SRC_ARRAY[@]}
+
+OBJ_DIR=build_obj_wasm
+mkdir -p "$OBJ_DIR"
+
+# 1) Compile each source file to .o in parallel with progress indicator
+INDEX=0
+for SRC in "${SRC_ARRAY[@]}"; do
+    ((INDEX++))
+    O_FILE="$OBJ_DIR/$(basename "${SRC%.cpp}.o")"
+    echo "[${INDEX}/${TOTAL}] Compiling $(basename $SRC)" >&2
+    emcc -c $SRC ${INCLUDE_PATHS} -std=c++17 -O3 --bind -o "$O_FILE" &
+    # Limit number of parallel background jobs
+    while [ $(jobs -pr | wc -l) -ge $CORES ]; do
+        sleep 0.1
+    done
+done
+wait
+
+echo "Linking object files ..." >&2
+
+# 2) Link all objects into final WASM
+emcc $OBJ_DIR/*.o \
     -o OpenDriveWasm.js \
-    -std=c++17 \
-    -O3 \
     --bind \
     -s WASM=1 \
     -s MODULARIZE=1 \
     -s EXPORT_ES6=1 \
     -s ALLOW_MEMORY_GROWTH=1 \
-    -s "EXPORTED_RUNTIME_METHODS=['ccall', 'cwrap']" \
-    -s "ENVIRONMENT='web'"
+    -s "EXPORTED_RUNTIME_METHODS=['ccall','cwrap']" \
+    -s FORCE_FILESYSTEM=1 \
+    -s "ENVIRONMENT='web'" \
+    -O3
 
+# Clean up object files if link succeeded
 if [ $? -eq 0 ]; then
     echo "----------------------------------------------------"
     echo "WASM build complete!"
     echo "Output files: OpenDriveWasm.js, OpenDriveWasm.wasm"
+    echo "Cleaning intermediate objects ..." >&2
+    rm -rf "$OBJ_DIR"
     echo "----------------------------------------------------"
 else
     echo "----------------------------------------------------"
-    echo "WASM build failed."
+    echo "WASM build failed. (See errors above)" >&2
     echo "----------------------------------------------------"
 fi

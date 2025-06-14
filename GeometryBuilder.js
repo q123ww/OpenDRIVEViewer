@@ -131,16 +131,23 @@ export class GeometryBuilder {
             return this.calculateLinePoint(x, y, hdg, s);
         }
 
-        const R = 1 / curvature; // signed radius
-        const cx = x - Math.sin(hdg) / curvature;
-        const cy = y + Math.cos(hdg) / curvature;
+        // 적분 간격 설정: 0.5 m 이하, 최소 20 스텝
+        const targetStep = 0.5;
+        let steps = Math.ceil(s / targetStep);
+        steps = Math.max(steps, 20);
+        const ds = s / steps;
 
-        const theta = hdg + s * curvature;
+        let posX = x;
+        let posY = y;
+        let theta = hdg; // 현재 전역 헤딩
 
-        const px = cx + Math.sin(theta) / curvature;
-        const py = cy - Math.cos(theta) / curvature;
+        for (let i = 0; i < steps; i++) {
+            posX += ds * Math.cos(theta);
+            posY += ds * Math.sin(theta);
+            theta += curvature * ds; // 일정 곡률
+        }
 
-        return new THREE.Vector3(px, 0, -py);
+        return new THREE.Vector3(posX, 0, -posY);
     }
 
     calculateSpiralPoint(x, y, hdg, s, curvStart, curvEnd, totalLength) {
@@ -149,7 +156,10 @@ export class GeometryBuilder {
         }
 
         // 간단한 수치 적분으로 클로소이드 근사 (Euler integration)
-        const steps = 20; // 더 크게 하면 정확도 향상, 성능 필요시 조정
+        // 정확도 향상을 위해 0.5 m 이하 간격으로 적분 (최소 40 스텝, 최대 2000 스텝)
+        const targetStep = 0.5;                    // 적분 간격 [m]
+        let steps = Math.ceil(s / targetStep);
+        steps = Math.min(Math.max(steps, 40), 2000); // 40 ≤ steps ≤ 2000
         const ds = s / steps;
         let posX = x;
         let posY = y;
@@ -220,7 +230,7 @@ export class GeometryBuilder {
 
                 const lanePts=[];
                 for (const sample of refArr) {
-                    const offset = this.computeLaneCenterOffset(laneId, laneSections, sample.s);
+                    const offset = this.computeLaneCenterOffset(laneId, laneSections, sample.s, road.laneOffset || []);
                     const pt = this.offsetPoints([sample.point], offset)[0];
                     lanePts.push(pt);
                 }
@@ -230,6 +240,27 @@ export class GeometryBuilder {
                 line.userData = {type:'laneCenter', laneId: laneId, roadId: road.id, laneType: laneType};
                 group.add(line);
             });
+
+            // Fast path: if lane objects already contain precomputed centerline arrays (from WASM),
+            // build simple Line meshes directly and skip offset/width math.
+            if (laneSections[0].lanes && laneSections[0].lanes[0] && laneSections[0].lanes[0].centerline) {
+                const groupCenter = new THREE.Group();
+                groupCenter.name = `road_${road.id}_lanes_centerline`;
+                for (const ls of laneSections) {
+                    for (const lane of ls.lanes) {
+                        if(lane.id===0) continue;
+                        if(!lane.centerline || lane.centerline.length<2) continue;
+                        const pts = lane.centerline.map(p=>new THREE.Vector3(p.x, p.y, -p.z));
+                        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+                        const mat  = new THREE.LineBasicMaterial({color:0x00ffff});
+                        const line = new THREE.Line(geom, mat);
+                        line.name = `lane_center_${road.id}_${lane.id}`;
+                        line.userData={type:'laneCenter', roadId:road.id, laneId:lane.id};
+                        groupCenter.add(line);
+                    }
+                }
+                return groupCenter;
+            }
 
             return group;
         } catch (err) {
@@ -275,7 +306,7 @@ export class GeometryBuilder {
                 const pts = this.calculateRoadPoints(geom, interval);
                 if (refArr.length && pts.length) {
                     refArr.push(...pts.slice(1));
-                } else {
+                    } else { 
                     refArr.push(...pts);
                 }
             }
@@ -321,8 +352,9 @@ export class GeometryBuilder {
             const rightPts = [];
             for (let i=0;i<refPts.length;i++){
                 const widths = getWidths(sVals[i]);
-                leftPts.push(this.offsetPoints([refPts[i]], widths.left)[0]);
-                rightPts.push(this.offsetPoints([refPts[i]], -widths.right)[0]);
+                const laneOff = this.getLaneOffsetAt(road.laneOffset || [], sVals[i]);
+                leftPts.push(this.offsetPoints([refPts[i]], laneOff + widths.left)[0]);
+                rightPts.push(this.offsetPoints([refPts[i]], laneOff - widths.right)[0]);
             }
 
             const vertexCount = refPts.length * 2;
@@ -405,8 +437,22 @@ export class GeometryBuilder {
         return w;
     }
 
-    // Compute lane center offset from reference line at global s
-    computeLaneCenterOffset(laneId, laneSections, sGlobal) {
+    // after getLaneWidthAt add new function
+    getLaneOffsetAt(offsetSegArr, sGlobal) {
+        if (!offsetSegArr || offsetSegArr.length === 0) return 0;
+        let segIndex = 0;
+        for (let i = 1; i < offsetSegArr.length; i++) {
+            if (offsetSegArr[i].s > sGlobal) break;
+            segIndex = i;
+        }
+        const seg = offsetSegArr[segIndex];
+        const { a, b, c, d, s } = seg;
+        const localDs = sGlobal - s;
+        return this.evaluatePoly(a,b,c,d,localDs);
+    }
+
+    // modify computeLaneCenterOffset signature and implementation
+    computeLaneCenterOffset(laneId, laneSections, sGlobal, laneOffsetSegs=[]) {
         const ls = this.findLaneSection(laneSections, sGlobal);
         if (!ls) return 0;
         const left = ls.lanes.filter(l=>l.id>0).sort((a,b)=>a.id-b.id);
@@ -420,7 +466,6 @@ export class GeometryBuilder {
                 if (SKIP_ZERO_WIDTH && w===0) { if(l.id===laneId) break; else continue; }
                 if (l.id === laneId) { acc += w/2; break;} else acc += w;
             }
-            return acc;
         } else if (laneId<0){
             for (const l of right) {
                 if(l.type==='none') { if(l.id===laneId) break; else continue; }
@@ -428,9 +473,11 @@ export class GeometryBuilder {
                 if (SKIP_ZERO_WIDTH && w===0) { if(l.id===laneId) break; else continue; }
                 if (l.id === laneId) { acc += w/2; break;} else acc += w;
             }
-            return -acc;
+            acc = -acc;
         }
-        return 0; // center lane 0
+        // LaneOffset 적용 (positive values shift entire cross-section to the left)
+        const laneOffsetVal = this.getLaneOffsetAt(laneOffsetSegs, sGlobal);
+        return acc + laneOffsetVal;
     }
 
     buildRoadMarkMeshes(road, cameraDistance){
@@ -476,7 +523,7 @@ export class GeometryBuilder {
                 const boundaryPts=[];
                 for(let idx=0; idx<refArr.length; idx++){
                     const sample=refArr[idx];
-                    const centerOffset=this.computeLaneCenterOffset(lane.id,laneSections,sample.s);
+                    const centerOffset=this.computeLaneCenterOffset(lane.id,laneSections,sample.s, road.laneOffset || []);
                     const halfWidth=this.getLaneWidthAt(lane.widthSeg, sample.s - this.findLaneSection(laneSections,sample.s).s)/2;
                     const bOffset = lane.id>0 ? centerOffset-halfWidth : centerOffset+halfWidth;
 
@@ -502,5 +549,11 @@ export class GeometryBuilder {
             this.logger.error('buildRoadMarkMeshes error',err);
             return null;
         }
+    }
+
+    setOnlyReferenceLinesVisible(visible=true){
+        this.roadContainer.traverse(o=>{
+            o.visible = o.userData?.type === 'referenceLine' ? true : !visible;
+        });
     }
 } 

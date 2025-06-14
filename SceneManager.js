@@ -204,7 +204,14 @@ export class SceneManager {
                  this.renderer.render(this.scene, this.camera);
             }
             if (this.stats) {
-                this.stats.update(); // FPS 업데이트
+                try {
+                    this.stats.update(); // FPS 업데이트
+                } catch (e) {
+                    if (!this._statsErrorLogged) {
+                        this.logger.warn('Stats update error (silenced further):', e.message);
+                        this._statsErrorLogged = true; // 한 번만 로그
+                    }
+                }
             }
         };
         animate();
@@ -229,8 +236,8 @@ export class SceneManager {
             return;
         }
 
-        // roadMesh.name = `road_${roadId}`; // OpenDriveViewer에서 이미 그룹에 이름을 설정해서 전달함 (예: road_ref_group_ID, lane_group_ID)
-        roadMesh.visible = this.referenceLinesVisible; // 기본 숨김 여부 적용
+        // roadMesh는 roadContainer의 가시성 설정( setRoadsVisible )을 그대로 따르도록 기본값 true 유지
+        roadMesh.visible = true;
         this.roadContainer.add(roadMesh);
         this.logger.log(`SceneManager: Mesh ${roadMesh.name} (ID: ${roadId}) ADDED to roadContainer. roadContainer children: ${this.roadContainer.children.length}. Mesh visibility: ${roadMesh.visible}`);
     
@@ -344,27 +351,37 @@ export class SceneManager {
         this.camera.position.set(center.x, aboveHeight, center.z);
         this.camera.lookAt(center);
 
-        // Orthographic 카메라 zoom 조정
+        // 맵이 매우 큰 경우(수십~수백 km) 카메라가 객체보다 멀어 far 클리핑에 걸릴 수 있으므로
+        // bounding box 기반으로 far 값을 동적으로 확장한다.
+        const maxDim = Math.max(size.x, size.z);
+        this.camera.near = 0.1;
+        this.camera.far = aboveHeight + maxDim * 2; // 여유분 포함
+        // ---- Zoom 계산: 네트워크가 화면에 모두 들어오도록 ----
         if (this.camera instanceof THREE.OrthographicCamera) {
-            const viewWidth = this.camera.right - this.camera.left;
+            const viewWidth  = this.camera.right - this.camera.left;
             const viewHeight = this.camera.top - this.camera.bottom;
-            const requiredWidth = size.x * padding;
-            const requiredHeight = size.z * padding; // Y 대신 Z 축 사용
 
-            const zoomX = viewWidth / requiredWidth;
+            const requiredWidth  = size.x * padding;
+            const requiredHeight = size.z * padding; // XZ 평면 기준 높이
+
+            const zoomX = viewWidth  / requiredWidth;
             const zoomY = viewHeight / requiredHeight;
+
             let newZoom = Math.min(zoomX, zoomY);
-            const MIN_ZOOM_CAP = 0.001;
-            if (newZoom < MIN_ZOOM_CAP) newZoom = MIN_ZOOM_CAP; // 안전 하한
+            const MIN_ZOOM = 0.0005;
+            if (!Number.isFinite(newZoom) || newZoom < MIN_ZOOM) newZoom = MIN_ZOOM;
 
             this.camera.zoom = newZoom;
-            // OrbitControls의 zoom 한계도 동적으로 업데이트해 갑작스러운 점프 방지
+
+            // OrbitControls 범위도 같이 조정
             if (this.controls) {
-                this.controls.minZoom = newZoom * 0.5; // 조금 더 넓게 볼 수 있도록
-                this.controls.maxZoom = newZoom * 100; // 충분히 확대 가능
+                this.controls.minZoom = newZoom * 0.5;
+                this.controls.maxZoom = newZoom * 200;
             }
+
             this.camera.updateProjectionMatrix();
         }
+        this.camera.updateProjectionMatrix();
 
         if (this.controls) {
             this.controls.target.copy(center);

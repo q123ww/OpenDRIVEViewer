@@ -12,7 +12,7 @@
 
 ### 1.2. OpenDRIVE 데이터 파싱 및 객체 모델링 분석 (완료)
 - `pyxodr` 라이브러리 기반 Python 객체 모델링 방식 분석 완료.
-- JavaScript DOMParser 방식과 비교하여 장단점 논의 완료.
+- JavaScript DOMParser 방식과 비교하여 장단점 논의 rrrr완료.
 - JavaScript에서도 구조화된 객체 모델 도입의 필요성 확인 (이는 Phase 2.6에서 실제로 구현됨).
 
 ### 1.3. 핵심 지오메트리 계산 로직 분석 (`geometry.py` 등) (완료)

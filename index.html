@@ -220,7 +220,14 @@
                 console.log('All UI elements found, initializing OpenDriveViewer...');
                 // OpenDriveViewer 초기화
                 const viewer = new OpenDriveViewer('viewer', uiElements);
+                window.viewer = viewer; // 콘솔에서 전역으로 접근 가능하도록 노출
                 console.log('OpenDriveViewer initialized successfully');
+
+                // 초기에는 항상 보이도록
+                viewer.sceneManager.setRoadsVisible(true);
+
+                // 새로운 함수가 로드된 상태인지 확인
+                console.log('Checking new function:', viewer.sceneManager.addRoad.toString().includes('visible = true'));
             } catch (error) {
                 console.error('Failed to initialize OpenDriveViewer:', error);
                 console.error('Error stack:', error.stack);

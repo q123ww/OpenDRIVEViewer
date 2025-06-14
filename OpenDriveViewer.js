@@ -1,8 +1,8 @@
-import { SceneManager } from './SceneManager.js';
+import { SceneManager } from './SceneManager.js?v=20250614c';
 import { UIManager } from './UIManager.js';
 import { GeometryBuilder } from './GeometryBuilder.js';
 import { DebugLogger } from './DebugLogger.js';
-import OpenDriveWasmModule from './OpenDriveWasm.js?v=20250613';
+import OpenDriveWasmModule from './OpenDriveWasm.js?v=20250614d';
 // THREE는 SceneManager 등에서 import 하므로 여기서는 직접 import 필요 없을 수 있음
 // import * as THREE from 'three'; 
 
@@ -20,7 +20,7 @@ export class OpenDriveViewer {
         this.sceneManager.startAnimationLoop();
         
         // 지오메트리 빌더 초기화
-        this.geometryBuilder = new GeometryBuilder(this.logger);
+            this.geometryBuilder = new GeometryBuilder(this.logger);
         // SceneManager와 연결
         this.sceneManager.geometryBuilder = this.geometryBuilder;
         
@@ -36,6 +36,14 @@ export class OpenDriveViewer {
         };
         OpenDriveWasmModule(wasmOpts).then(mod => {
             this.wasm = mod;
+            if (typeof mod.parseXodr !== 'function') {
+                try {
+                    mod.parseXodr = mod.cwrap('parseXodr', 'string', ['string']);
+                    this.logger.log('parseXodr bound via cwrap fallback');
+                } catch (e) {
+                    this.logger.error('Failed to bind parseXodr via cwrap', e);
+                }
+            }
             this.logger.log('WASM module ready');
         }).catch(err => {
             this.logger.error('Failed to load WASM module', err);
@@ -69,14 +77,14 @@ export class OpenDriveViewer {
 
     async loadFile(file) {
         try {
-            this.uiManager.showLoading(true);
+        this.uiManager.showLoading(true);
             this.uiManager.updateLoadingProgress(0);
 
             const text = await file.text();
             this.uiManager.updateLoadingProgress(20);
         
-            this.sceneManager.clearScene();
-            this.uiManager.clearRoadList();
+        this.sceneManager.clearScene();
+        this.uiManager.clearRoadList();
             this.uiManager.updateLoadingProgress(40);
 
             if (!this.wasm) {

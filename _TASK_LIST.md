@@ -198,9 +198,7 @@
   2. Git Bash + Emscripten SDK 환경에서 **빌드 성공**(2025-06-12).
   3. `OpenDriveViewer.js`에 **WASM 모듈(default export) 로드** 및 기존 JS/Worker 파서 제거.
   4. 브라우저 콘솔에 `WASM module ready` 메시지 확인, 스텁 파서(JSON `{length: …}`) 호출 성공.
-- **다음 작업**
-  - [ ] `wasm_parser_wrapper.cpp` 를 실제 파싱 로직(`odr::OpenDriveMap`) + `nlohmann::json` 직렬화로 교체.
-  - [ ] JS → Three.js 파이프라인 연결(Road List → 지오메트리 렌더링).
+  5. **2025-06-14**: `wasm_parser_wrapper.cpp`에서 `lane.id == 0` 차선의 `centerline` 직렬화를 생략하도록 수정 → 흰색 reference line 과 파란 차선 중심선 겹침 현상 해결.
 
 ### 4.3. 서버 연동(REST API) 실험 (대기)
 - **상태**: WASM 방식 안정화 후 착수 예정.
