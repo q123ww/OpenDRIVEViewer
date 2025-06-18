@@ -826,6 +826,15 @@
                 const endIndex = startIndices.get(i + 1);
                 const indexCount = endIndex - startIndex;
                 
+                // 처음 5개 객체에 대해서는 상세 디버깅
+                const isDebugObject = i < 5;
+                
+                if (isDebugObject) {
+                    console.log(`🔍 객체 ${i} 상세 분석:`);
+                    console.log(`  - startIndex: ${startIndex}, endIndex: ${endIndex}`);
+                    console.log(`  - indexCount: ${indexCount}`);
+                }
+                
                 if (indexCount <= 0) {
                     console.warn(`  객체 ${i}: 인덱스 개수가 0 이하 (${indexCount}), 건너뜀`);
                     skippedObjects++;
@@ -849,6 +858,10 @@
                         const y = vert[1];
                         const z = vert[2];
 
+                        if (isDebugObject && objVerticesList.length < 30) { // 처음 10개 정점만 로깅
+                            console.log(`    정점 ${objVerticesList.length/3}: (${x}, ${y}, ${z})`);
+                        }
+
                         if (isNaN(x) || isNaN(y) || isNaN(z)) {
                             hasNaN = true;
                             objVerticesList.push(0, 0, 0);
@@ -859,43 +872,77 @@
                     }
                     objIndicesList.push(vertexMap.get(originalIndex));
                 }
+                
+                if (isDebugObject) {
+                    console.log(`  - 생성된 정점 수: ${objVerticesList.length / 3}`);
+                    console.log(`  - 생성된 인덱스 수: ${objIndicesList.length}`);
+                    console.log(`  - objVerticesList.length > 0: ${objVerticesList.length > 0}`);
+                    console.log(`  - objIndicesList.length > 0: ${objIndicesList.length > 0}`);
+                }
 
                 if (hasNaN) {
                     console.warn(`  객체 ${i}: NaN 값 포함, 0으로 대체`);
                 }
 
-                if (objVerticesList.length > 0 && objIndicesList.length > 0) {
-                    const objVertices = new Float32Array(objVerticesList);
-                    geometry.setAttribute('position', new THREE.BufferAttribute(objVertices, 3));
-                    geometry.setIndex(objIndicesList);
-                    geometry.computeVertexNormals();
+                // 최소 3개의 정점과 3개의 인덱스가 있어야 삼각형 구성 가능
+                const hasValidGeometry = objVerticesList.length >= 9 && objIndicesList.length >= 3; // 3개 정점 * 3좌표 = 9
+                
+                if (isDebugObject) {
+                    console.log(`  - hasValidGeometry: ${hasValidGeometry}`);
+                    console.log(`  - 조건: 정점 >= 9 (${objVerticesList.length >= 9}), 인덱스 >= 3 (${objIndicesList.length >= 3})`);
+                }
+                
+                if (hasValidGeometry) {
+                    try {
+                        const objVertices = new Float32Array(objVerticesList);
+                        geometry.setAttribute('position', new THREE.BufferAttribute(objVertices, 3));
+                        geometry.setIndex(objIndicesList);
+                        geometry.computeVertexNormals();
 
-                    // 바운딩 박스 계산으로 크기 확인
-                    geometry.computeBoundingBox();
-                    const box = geometry.boundingBox;
-                    const size = box.max.distanceTo(box.min);
+                        // 바운딩 박스 계산으로 크기 확인
+                        geometry.computeBoundingBox();
+                        const box = geometry.boundingBox;
+                        const size = box.max.distanceTo(box.min);
 
-                    const mesh = new THREE.Mesh(geometry, material.clone());
-                    mesh.userData = { 
-                        id: `RoadObject-${i}`, 
-                        type: '도로 시설물',
-                        size: size.toFixed(3),
-                        vertices: objVerticesList.length / 3,
-                        indices: objIndicesList.length
-                    };
-                    
-                    // 작은 객체는 더 눈에 띄게 만들기
-                    if (size < 1.0) {
-                        mesh.material.color.setHex(0xffff00); // 노란색
-                        mesh.material.emissive.setHex(0x444400); // 발광 효과
+                        // 크기가 너무 작은 경우 (0에 가까운 경우) 건너뛰기
+                        if (size < 0.001) {
+                            if (isDebugObject) {
+                                console.warn(`  객체 ${i}: 크기가 너무 작음 (${size.toFixed(6)}m), 건너뜀`);
+                            }
+                            skippedObjects++;
+                            continue;
+                        }
+
+                        const mesh = new THREE.Mesh(geometry, material.clone());
+                        mesh.userData = { 
+                            id: `RoadObject-${i}`, 
+                            type: '도로 시설물',
+                            size: size.toFixed(3),
+                            vertices: objVerticesList.length / 3,
+                            indices: objIndicesList.length
+                        };
+                        
+                        // 작은 객체는 더 눈에 띄게 만들기
+                        if (size < 1.0) {
+                            mesh.material.color.setHex(0xffff00); // 노란색
+                            mesh.material.emissive.setHex(0x444400); // 발광 효과
+                        }
+                        
+                        roadObjectsGroup.add(mesh);
+                        createdObjects++;
+                        
+                        if (isDebugObject || createdObjects <= 10) {
+                            console.log(`  객체 ${i}: 생성 완료 (크기: ${size.toFixed(3)}m, 정점: ${objVerticesList.length/3}, 인덱스: ${objIndicesList.length})`);
+                        }
+                        
+                    } catch (error) {
+                        console.error(`  객체 ${i}: 메쉬 생성 중 오류 - ${error.message}`);
+                        skippedObjects++;
                     }
-                    
-                    roadObjectsGroup.add(mesh);
-                    createdObjects++;
-                    
-                    console.log(`  객체 ${i}: 생성 완료 (크기: ${size.toFixed(3)}m, 정점: ${objVerticesList.length/3}, 인덱스: ${objIndicesList.length})`);
                 } else {
-                    console.warn(`  객체 ${i}: 빈 지오메트리, 건너뜀`);
+                    if (isDebugObject) {
+                        console.warn(`  객체 ${i}: 지오메트리 부족 (정점: ${objVerticesList.length/3}, 인덱스: ${objIndicesList.length}), 건너뜀`);
+                    }
                     skippedObjects++;
                 }
             }
@@ -912,38 +959,107 @@
         // 도로시설물이 표시되지 않을 때 대체 마커 생성
         function createFallbackRoadObjectMarkers(odrMesh, startIndices) {
             const vertices = odrMesh.vertices;
+            const indices = odrMesh.indices;
             const totalObjects = startIndices.size();
             
-            for (let i = 0; i < Math.min(totalObjects - 1, 10); i++) { // 최대 10개만
+            console.log(`🔄 대체 마커 생성 시작: ${totalObjects}개 객체 분석`);
+            
+            // 1. 기본 구체 마커 생성 (기존 방식)
+            let markerCount = 0;
+            for (let i = 0; i < Math.min(totalObjects - 1, 50); i++) { // 최대 50개
                 const startIndex = startIndices.get(i);
+                const endIndex = startIndices.get(i + 1);
+                const indexCount = endIndex - startIndex;
                 
-                if (startIndex < vertices.size()) {
-                    const vert = vertices.get(startIndex);
-                    const x = vert[0];
-                    const y = vert[1]; 
-                    const z = vert[2];
+                if (indexCount > 0 && startIndex < indices.size()) {
+                    // 첫 번째 인덱스에 해당하는 정점 사용
+                    const firstVertexIndex = indices.get(startIndex);
+                    if (firstVertexIndex < vertices.size()) {
+                        const vert = vertices.get(firstVertexIndex);
+                        const x = vert[0];
+                        const y = vert[1]; 
+                        const z = vert[2];
+                        
+                        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                            // 구 형태의 마커 생성
+                            const geometry = new THREE.SphereGeometry(1.5, 8, 6);
+                            const material = new THREE.MeshStandardMaterial({ 
+                                color: 0xff0000,
+                                emissive: 0x440000,
+                                transparent: true,
+                                opacity: 0.9
+                            });
+                            
+                            const marker = new THREE.Mesh(geometry, material);
+                            marker.position.set(x, z, -y); // 좌표계 변환
+                            marker.userData = { 
+                                id: `FallbackMarker-${i}`, 
+                                type: '도로 시설물 마커',
+                                originalPosition: [x, y, z],
+                                indexCount: indexCount
+                            };
+                            
+                            roadObjectsGroup.add(marker);
+                            markerCount++;
+                            
+                            if (markerCount <= 10) {
+                                console.log(`  대체 마커 ${i}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) [${indexCount}개 인덱스]`);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 2. 점 구름(Point Cloud) 방식으로도 시도
+            if (markerCount > 0) {
+                console.log(`✅ ${markerCount}개 대체 마커 생성 완료`);
+                
+                // 추가로 점 구름 생성 (더 많은 시설물 표시)
+                try {
+                    const pointGeometry = new THREE.BufferGeometry();
+                    const pointPositions = [];
                     
-                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                        // 구 형태의 마커 생성
-                        const geometry = new THREE.SphereGeometry(2.0, 8, 6);
-                        const material = new THREE.MeshStandardMaterial({ 
-                            color: 0xff0000,
-                            emissive: 0x440000,
-                            transparent: true,
-                            opacity: 0.8
+                    for (let i = 0; i < Math.min(totalObjects - 1, 1000); i++) { // 최대 1000개
+                        const startIndex = startIndices.get(i);
+                        const endIndex = startIndices.get(i + 1);
+                        const indexCount = endIndex - startIndex;
+                        
+                        if (indexCount > 0 && startIndex < indices.size()) {
+                            const firstVertexIndex = indices.get(startIndex);
+                            if (firstVertexIndex < vertices.size()) {
+                                const vert = vertices.get(firstVertexIndex);
+                                const x = vert[0];
+                                const y = vert[1]; 
+                                const z = vert[2];
+                                
+                                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                                    pointPositions.push(x, z, -y); // 좌표계 변환
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (pointPositions.length > 0) {
+                        pointGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pointPositions, 3));
+                        
+                        const pointMaterial = new THREE.PointsMaterial({
+                            color: 0x00ffff,
+                            size: 3.0,
+                            sizeAttenuation: false
                         });
                         
-                        const marker = new THREE.Mesh(geometry, material);
-                        marker.position.set(x, z, -y); // 좌표계 변환
-                        marker.userData = { 
-                            id: `FallbackMarker-${i}`, 
-                            type: '도로 시설물 마커',
-                            originalPosition: [x, y, z]
+                        const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
+                        pointCloud.userData = { 
+                            type: '도로 시설물 점 구름',
+                            pointCount: pointPositions.length / 3
                         };
                         
-                        roadObjectsGroup.add(marker);
-                        console.log(`  대체 마커 ${i}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+                        roadObjectsGroup.add(pointCloud);
+                        console.log(`✨ 점 구름 생성: ${pointPositions.length / 3}개 점`);
                     }
+                    
+                } catch (error) {
+                    console.error(`점 구름 생성 실패: ${error.message}`);
                 }
             }
         }
