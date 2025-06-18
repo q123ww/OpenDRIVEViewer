@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>OpenDRIVE 3D Viewer</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans KR", sans-serif;
+            height: 100vh; 
+            overflow: hidden; 
+        }
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+        .main-content {
+            flex: 3; /* 뷰어 영역이 디버그 패널보다 3배 넓게 */
+            position: relative; /* 자식 요소의 absolute 포지셔닝 기준 */
+            height: 100%;
+        }
+        #viewer-container {
+            width: 100%;
+            height: 100%;
+            position: relative; /* #controls 같은 오버레이 요소들의 기준 */
+        }
+        #viewer-container > canvas {
+            display: block; /* canvas가 div의 크기를 정확히 따르도록 */
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            max-width: 280px;
+            max-height: 80vh; /* 화면 높이의 80%를 넘지 않도록 */
+            padding: 15px;
+            background: rgba(0,0,0,0.85);
+            color: white;
+            border-radius: 8px;
+            transition: opacity 0.3s ease;
+            overflow-y: auto; /* 내용이 길 경우 스크롤 */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px); /* 배경 블러 효과 */
+            z-index: 1500; /* 툴팁보다 위에 */
+        }
+        #controls.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #controls h3 { margin-top: 0; }
+        #controls label {
+            margin-right: 15px;
+            user-select: none;
+            display: flex; /* 체크박스와 텍스트를 수평 정렬 */
+            align-items: center;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: color 0.2s ease;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        #controls label:hover {
+            color: #87ceeb; /* 호버 시 밝은 파란색 */
+        }
+        
+        #controls input[type="checkbox"] {
+            margin-right: 8px;
+            margin-left: 0;
+            transform: scale(1.1);
+            cursor: pointer;
+        }
+        
+        #controls input[type="file"] {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        #controls input[type="file"]::-webkit-file-upload-button {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 3px;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        
+        #controls hr {
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.3);
+            margin: 12px 0;
+        }
+        .toggle-hint {
+            font-size: 0.8em;
+            opacity: 0.7;
+            margin: 10px 0 0 0;
+            text-align: center;
+        }
+        #info-tooltip {
+            position: fixed;
+            display: none;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            border-radius: 6px;
+            font-size: 13px;
+            pointer-events: none; /* 툴팁이 마우스 이벤트를 가로채지 않도록 설정 */
+            white-space: pre;
+            z-index: 1800; /* 컨트롤 패널보다 위에 */
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            backdrop-filter: blur(3px);
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        .message-popup {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 600;
+            z-index: 1900; /* 툴팁과 컨트롤 패널보다 위에 */
+            opacity: 0.95;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px);
+            font-size: 14px;
+            max-width: 90vw;
+            text-align: center;
+            animation: slideUp 0.3s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from {
+                transform: translateX(-50%) translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(-50%) translateY(0);
+                opacity: 0.95;
+            }
+        }
+        .success-message {
+            background-color: #28a745;
+        }
+        .error-message {
+            background-color: #dc3545;
+        }
+        .debug-panel {
+            flex: 1; /* main-content와 3:1 비율을 맞추기 위해 1로 수정 */
+            height: 100vh;
+            overflow-y: auto;
+            border-left: 3px solid #ddd;
+            padding: 1.2em;
+            background: linear-gradient(135deg, #f8f9fa 0%, #f1f3f4 100%);
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 0.75em;
+            position: relative;
+        }
+        
+        /* 🎯 디버그 패널 스크롤바 스타일링 (커서 룰: 사용자 경험) */
+        .debug-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .debug-panel::-webkit-scrollbar-track {
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        
+        .debug-panel::-webkit-scrollbar-thumb {
+            background: #adb5bd;
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+        
+        .debug-panel::-webkit-scrollbar-thumb:hover {
+            background: #6c757d;
+        }
+        
+        .debug-panel h3 {
+            margin-top: 0;
+            margin-bottom: 1em;
+            padding-bottom: 0.5em;
+            border-bottom: 2px solid #dee2e6;
+            color: #495057;
+            font-size: 1.1em;
+            position: sticky;
+            top: 0;
+            background: inherit;
+            z-index: 10;
+        }
+        
+        #debug-output {
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.5;
+            color: #212529;
+            background: #ffffff;
+            padding: 1em;
+            border-radius: 6px;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid #e9ecef;
+        }
+        h1, h3 {
+            font-weight: 700;
+        }
+        button {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans KR", sans-serif;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .popup {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+            font-size: 0.9em;
+            z-index: 100;
+        }
+        
+        /* 🎯 로딩 오버레이 스타일 (커서 룰: 사용자 경험) */
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 1.1em;
+            z-index: 2000; /* 가장 위에 표시 */
+        }
+        
+        #loading-overlay .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #loading-text {
+            margin: 0;
+            text-align: center;
+        }
+        
+        /* 🎯 반응형 디자인 (커서 룰: 사용자 경험 최적화) */
+        @media (max-width: 1200px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .main-content {
+                flex: none;
+                height: 60vh;
+            }
+            
+            .debug-panel {
+                flex: none;
+                height: 40vh;
+                border-left: none;
+                border-top: 3px solid #ddd;
+            }
+            
+            #controls {
+                max-width: 240px;
+                max-height: 50vh;
+                font-size: 12px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            #controls {
+                position: fixed;
+                top: 5px;
+                right: 5px;
+                left: auto;
+                max-width: 200px;
+                max-height: 40vh;
+                font-size: 11px;
+                padding: 10px;
+            }
+            
+            #controls h3 {
+                font-size: 14px;
+                margin-bottom: 8px;
+            }
+            
+            #info-tooltip {
+                font-size: 11px;
+                max-width: 250px;
+                padding: 8px;
+            }
+            
+            .message-popup {
+                bottom: 10px;
+                font-size: 12px;
+                padding: 10px 16px;
+                max-width: 95vw;
+            }
+        }
+        
+        /* 🎯 고해상도 디스플레이 최적화 */
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+            #info-tooltip {
+                font-size: 14px;
+            }
+            
+            #controls {
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-content">
+            <div id="loading-overlay">
+                <div class="spinner"></div>
+                <p id="loading-text">WASM 모듈 로딩 중...</p>
+            </div>
+            <div id="controls">
+                <h3>파일</h3>
+                <input type="file" id="file-input" accept=".xodr">
+                <hr>
+                
+                <h3>레이어 제어</h3>
+                <label><input type="checkbox" id="show-lanes" checked> 도로 표면 (진회색)</label>
+                <label><input type="checkbox" id="show-roadmarks" checked> 도로표시 (흰색)</label>
+                <label><input type="checkbox" id="show-road-objects" checked> 도로시설물 (초록색)</label>
+                <label><input type="checkbox" id="show-origin" checked> 중심점 표시 (빨간색)</label>
+                <label><input type="checkbox" id="show-original-origin" checked> 실제 원점 (0,0) (주황색)</label>
+                <label><input type="checkbox" id="show-axes" checked> 좌표축 (RGB)</label>
+                <p class="toggle-hint">(H 키로 패널 토글)</p>
+            </div>
+            <div id="info-tooltip"></div>
+
+            <div id="viewer-container">
+                <!-- 3D 뷰어가 여기에 렌더링됩니다. -->
+            </div>
+        </div>
+        <div class="debug-panel">
+            <h3>디버그 출력</h3>
+            <pre id="debug-output">파싱된 데이터가 여기에 표시됩니다...</pre>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="ModuleOpenDrive.js"></script>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+        import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+        import Stats from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/stats.module.js';
+
+        let scene, camera, renderer, controls, stats;
+        let lanesGroup, roadmarksGroup, roadObjectsGroup, gridHelper;
+        let originMarker, coordinateAxes, originalOriginMarker;
+        let highlightedObject = null;
+        let originalMaterial = null;
+        const highlightMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0x666600 });
+        
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // --- 유틸리티 함수 ---
+
+        function showLoading(message) {
+            document.getElementById('loading-text').textContent = message;
+            document.getElementById('loading-overlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        function showMessage(message, type = 'info') {
+            const popup = document.createElement('div');
+            popup.className = `message-popup ${type}`;
+            popup.textContent = message;
+            document.body.appendChild(popup);
+            setTimeout(() => popup.remove(), 5000);
+        }
+
+        // --- 초기화 및 메인 로직 ---
+
+        (async function init() {
+            try {
+                showLoading('WASM 모듈 로딩 중...');
+                const libOpenDriveModule = await libOpenDrive();
+                console.log('libOpenDRIVE 모듈:', libOpenDriveModule);
+                window.Module = libOpenDriveModule;
+                
+                init3DScene();
+
+                const defaultUrl = 'Maps/Germany_2018.xodr';
+                const urlParams = new URLSearchParams(window.location.search);
+                const loadUrl = urlParams.get('load') || defaultUrl;
+
+                if (loadUrl) {
+                    await loadAndParseUrl(loadUrl);
+                }
+
+            } catch (error) {
+                console.error('초기화 실패:', error);
+                showMessage(`초기화 실패: ${error.message}`, 'error');
+            } finally {
+                hideLoading();
+            }
+        })();
+
+        // --- 3D 뷰어 설정 ---
+
+        function init3DScene() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x202020);
+            
+            const viewerContainer = document.getElementById('viewer-container');
+            const width = viewerContainer.clientWidth;
+            const height = viewerContainer.clientHeight;
+
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 20000);
+            camera.position.set(50, 50, 50);
+            camera.lookAt(scene.position);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            viewerContainer.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            
+            stats = new Stats();
+            document.getElementById('viewer-container').appendChild(stats.dom);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            directionalLight.position.set(0.5, 1, 0.5).normalize();
+            scene.add(directionalLight);
+
+            gridHelper = new THREE.GridHelper(100, 10);
+            scene.add(gridHelper);
+
+            window.addEventListener('resize', onWindowResize, false);
+            renderer.domElement.addEventListener('click', onMouseClick, false);
+            
+            animate();
+        }
+
+        function onWindowResize() {
+            const viewerContainer = document.getElementById('viewer-container');
+            const width = viewerContainer.clientWidth;
+            const height = viewerContainer.clientHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            stats.update();
+            renderer.render(scene, camera);
+        }
+
+        function onMouseMove(event) {
+            const infoTooltip = document.getElementById('info-tooltip');
+            
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+
+            infoTooltip.style.left = (event.clientX + 15) + 'px';
+            infoTooltip.style.top = (event.clientY + 15) + 'px';
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // 🎯 원점 마커와 좌표축도 감지 대상에 포함 (커서 룰: 시스템 사고)
+            const allObjects = [
+                ...lanesGroup.children, 
+                ...roadmarksGroup.children, 
+                ...roadObjectsGroup.children
+            ];
+            
+            // 원점 마커들 추가
+            if (originMarker && originMarker.visible) {
+                allObjects.push(originMarker);
+            }
+            if (originalOriginMarker && originalOriginMarker.visible) {
+                allObjects.push(originalOriginMarker);
+            }
+            
+            // 좌표축 추가
+            if (coordinateAxes && coordinateAxes.visible) {
+                allObjects.push(...coordinateAxes.children);
+            }
+            
+            const intersects = raycaster.intersectObjects(allObjects, true);
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                const point = intersection.point;
+                const obj = intersection.object;
+                const face = intersection.face;
+
+                let infoText = `좌표: (${point.x.toFixed(2)}, ${point.z.toFixed(2)})`;
+                if (obj.userData && obj.userData.type) {
+                    infoText += `\n타입: ${obj.userData.type}`;
+                    if (obj.userData.id) {
+                        infoText += `\nID: ${obj.userData.id}`;
+                    }
+
+                    // 🎯 원점 마커들에 대한 특별한 정보 표시 (커서 룰: 사용자 경험)
+                    if (obj.userData.isOrigin) {
+                        infoText += `\n🎯 맵 중심점 (center_map=true)`;
+                        infoText += `\n표시 위치: (0, 0, 0)`;
+                        if (window.mapOffsetX !== undefined && window.mapOffsetY !== undefined) {
+                            infoText += `\n좌표 오프셋: X=${window.mapOffsetX.toFixed(3)}, Y=${window.mapOffsetY.toFixed(3)}`;
+                        }
+                    }
+                    // 🎯 실제 OpenDRIVE 원점에 대한 정보 표시
+                    else if (obj.userData.isRealOrigin) {
+                        infoText += `\n🎯 실제 OpenDRIVE 원점 (0,0)`;
+                        infoText += `\nOpenDRIVE 좌표: (0, 0)`;
+                        if (window.mapAnalysis) {
+                            infoText += `\n위치: ${window.mapAnalysis.quadrant}`;
+                            const bounds = window.mapAnalysis.bounds;
+                            infoText += `\n맵 경계: X(${bounds.min.x.toFixed(1)}~${bounds.max.x.toFixed(1)})`;
+                            infoText += `\n맵 경계: Z(${bounds.min.z.toFixed(1)}~${bounds.max.z.toFixed(1)})`;
+                        }
+                    }
+                    // 🎯 좌표축에 대한 정보 표시
+                    else if (obj.userData.axis) {
+                        infoText += `\n🧭 ${obj.userData.axis}축`;
+                        if (obj.userData.axis === 'X') {
+                            infoText += ` (빨강색, 동쪽 방향)`;
+                        } else if (obj.userData.axis === 'Y') {
+                            infoText += ` (초록색, 북쪽 방향)`;
+                        } else if (obj.userData.axis === 'Z') {
+                            infoText += ` (파랑색, 위쪽 방향)`;
+                        }
+                    }
+                    // 일반 도로 객체에 대한 정보
+                    else {
+                        const odrMesh = obj.userData.odrMesh;
+                        if (odrMesh && face) {
+                            const vertexIndex = face.a;
+                            try {
+                                if (odrMesh.get_road_id) {
+                                    const roadId = odrMesh.get_road_id(vertexIndex);
+                                    infoText += `\n도로 ID: ${roadId}`;
+                                }
+                                if (odrMesh.get_lane_id) {
+                                    const laneId = odrMesh.get_lane_id(vertexIndex);
+                                    const laneSecS0 = odrMesh.get_lanesec_s0(vertexIndex);
+                                    infoText += `\n차선 섹션 s0: ${laneSecS0.toFixed(2)}`;
+                                    infoText += `\n차선 ID: ${laneId}`;
+                                }
+                            } catch (e) {
+                                // C++ 측에서 정보를 찾지 못하는 경우 오류가 발생할 수 있음
+                                // console.warn(`정보 조회 실패 (인덱스: ${vertexIndex}):`, e);
+                            }
+                        }
+                    }
+                }
+                
+                infoTooltip.innerHTML = infoText;
+                infoTooltip.style.display = 'block';
+            } else {
+                const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -gridHelper.position.y);
+                const intersectionPoint = new THREE.Vector3();
+                if (raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+                    let infoText = `좌표: (${intersectionPoint.x.toFixed(2)}, ${intersectionPoint.z.toFixed(2)})`;
+                    infoTooltip.innerHTML = infoText;
+                    infoTooltip.style.display = 'block';
+                } else {
+                    infoTooltip.style.display = 'none';
+                }
+            }
+        }
+
+        // --- 파일 파싱 및 데이터 처리 ---
+
+        async function loadAndParseUrl(url) {
+            try {
+                showLoading(`[AutoLoad] ${url} 파일 로드 중...`);
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`파일을 가져오는 데 실패했습니다: ${response.statusText}`);
+                }
+                const buffer = await response.arrayBuffer();
+                console.log(`[AutoLoad] 파일 로드 완료: ${url}, 크기: ${buffer.byteLength} bytes`);
+                await parseXODR(buffer);
+                showMessage("맵 로딩 및 파싱 성공!", "success");
+            } catch (error) {
+                console.error('[AutoLoad] 자동 로드 실패:', error);
+                showMessage(error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function parseXODR(buffer) {
+            const outputEl = document.getElementById('debug-output');
+            try {
+                console.log("[Phase 1.3] OpenDRIVE 파싱을 시작합니다...");
+                const fileName = "Germany_2018.xodr";
+                Module.FS_createDataFile("/", fileName, new Uint8Array(buffer), true, true);
+                
+                const config = {
+                    with_lateralProfile: true,
+                    with_laneHeight: true,
+                    with_road_objects: true,
+                    center_map: true,
+                    abs_z_for_for_local_road_obj_outline: false
+                };
+                
+                const map = new Module.OpenDriveMap(fileName, config);
+                
+                // 🎯 맵 오프셋 정보를 전역 변수에 저장 (커서 룰: 데이터 캡슐화)
+                window.mapOffsetX = map.x_offs;
+                window.mapOffsetY = map.y_offs;
+                console.log(`맵 좌표 오프셋: X=${window.mapOffsetX}, Y=${window.mapOffsetY}`);
+                
+                const roadNetworkMesh = Module.get_road_network_mesh(map, 0.5);
+                
+                displayDebugData(map, roadNetworkMesh);
+                init3DViewer(roadNetworkMesh);
+
+                map.delete();
+                Module.FS_unlink(fileName);
+
+            } catch (e) {
+                console.error("parseXODR 함수에서 심각한 오류 발생:", e);
+                if(outputEl) {
+                    outputEl.textContent = "파싱 중 심각한 오류가 발생했습니다:\\n\\n" + e.stack;
+                }
+                throw e; // 상위 catch 블록으로 에러를 다시 던져 사용자에게 팝업 알림
+            }
+        }
+
+        function init3DViewer(roadNetworkMesh) {
+            console.log("Phase 2: 3D 뷰어 초기화를 시작합니다.");
+            clearScene();
+
+            lanesGroup = new THREE.Group();
+            lanesGroup.name = "Lanes";
+            roadmarksGroup = new THREE.Group();
+            roadmarksGroup.name = "Roadmarks";
+            roadObjectsGroup = new THREE.Group();
+            roadObjectsGroup.name = "RoadObjects";
+
+            const laneMaterial = new THREE.MeshStandardMaterial({ color: 0x505050, side: THREE.DoubleSide });
+            laneMaterial.name = "Lanes";
+            const roadmarkMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+            roadmarkMaterial.name = "Roadmarks";
+            const roadObjectMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+            roadObjectMaterial.name = "RoadObjects";
+
+            // 차선 메쉬
+            const odrLanesMesh = roadNetworkMesh.lanes_mesh;
+            const lanesMesh = createThreeMeshFromOdrMesh(odrLanesMesh, laneMaterial);
+            if (lanesMesh) {
+                lanesMesh.userData = { 
+                    type: '도로 표면',
+                    odrMesh: odrLanesMesh 
+                };
+                lanesGroup.add(lanesMesh);
+            }
+            
+            // 도로 표시 메쉬
+            const odrRoadmarksMesh = roadNetworkMesh.roadmarks_mesh;
+            const roadmarksMesh = createThreeMeshFromOdrMesh(odrRoadmarksMesh, roadmarkMaterial);
+            if (roadmarksMesh) {
+                roadmarksMesh.userData = { 
+                    type: '도로 표시',
+                    odrMesh: odrRoadmarksMesh
+                };
+                roadmarksGroup.add(roadmarksMesh);
+            }
+            
+            // 도로 시설물 메쉬 (개별)
+            if (roadNetworkMesh.road_objects_mesh && roadNetworkMesh.road_objects_mesh.road_object_start_indices) {
+                createIndividualObjectMeshes(roadNetworkMesh.road_objects_mesh, roadNetworkMesh.road_objects_mesh.road_object_start_indices, roadObjectMaterial);
+            }
+
+            // 원점과 좌표축 표시
+            createOriginMarker();
+            createOriginalOriginMarker();
+            createCoordinateAxes();
+
+            // 모든 메쉬 그룹을 씬에 추가
+            scene.add(lanesGroup);
+            scene.add(roadmarksGroup);
+            scene.add(roadObjectsGroup);
+
+            // 카메라 및 그리드 업데이트
+            const allMeshes = [lanesMesh, roadmarksMesh, ...roadObjectsGroup.children].filter(m => m);
+            updateCameraAndGrid(allMeshes);
+            setupLayerControls();
+            
+            // 3D 그룹이 모두 생성된 후에 이벤트 리스너 추가
+            renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+        }
+
+        function createThreeMeshFromOdrMesh(odrMesh, material) {
+            if (!odrMesh || odrMesh.vertices.size() === 0) {
+                console.warn(`[${material.name} 메쉬] 경고: 렌더링할 메쉬 데이터가 없습니다.`);
+                return null;
+            }
+
+            const vertices = odrMesh.vertices;
+            const indices = odrMesh.indices;
+            const num_vertices = vertices.size();
+
+            const reorderedVertices = new Float32Array(num_vertices * 3);
+            let hasNaN = false;
+
+            // 좌표계 변환: OpenDRIVE (Z-up) -> Three.js (Y-up)
+            for (let i = 0; i < num_vertices; i++) {
+                const vert = vertices.get(i);
+                const x = vert[0];
+                const y = vert[1];
+                const z = vert[2];
+
+                if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                    hasNaN = true;
+                    reorderedVertices[i * 3 + 0] = 0;
+                    reorderedVertices[i * 3 + 1] = 0;
+                    reorderedVertices[i * 3 + 2] = 0;
+                } else {
+                    reorderedVertices[i * 3 + 0] = x;
+                    reorderedVertices[i * 3 + 1] = z; // Y와 Z를 교환
+                    reorderedVertices[i * 3 + 2] = -y; // Y를 반전시켜 오른손 좌표계 유지
+                }
+            }
+            
+            if (hasNaN) {
+                console.warn(`[${material.name} 메쉬] 데이터에 NaN 값이 포함되어 있어 0으로 대체했습니다. 일부 모델이 잘못 보일 수 있습니다.`);
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(reorderedVertices, 3));
+            
+            const js_indices = [];
+            const indices_size = indices.size();
+            for (let i = 0; i < indices_size; i++) {
+                js_indices.push(indices.get(i));
+            }
+            geometry.setIndex(js_indices);
+            geometry.computeVertexNormals();
+
+            return new THREE.Mesh(geometry, material);
+        }
+
+        function createIndividualObjectMeshes(odrMesh, startIndices, material) {
+            if (!odrMesh || odrMesh.vertices.size() === 0 || !startIndices) {
+                console.warn("도로 시설물 데이터(startIndices)가 없어 개별 객체를 생성할 수 없습니다.");
+                return;
+            }
+
+            const vertices = odrMesh.vertices;
+            const indices = odrMesh.indices;
+
+            for (let i = 0; i < startIndices.size() - 1; i++) {
+                const startIndex = startIndices.get(i);
+                const endIndex = startIndices.get(i + 1);
+                
+                const geometry = new THREE.BufferGeometry();
+                const objVerticesList = [];
+                const objIndicesList = [];
+                let hasNaN = false;
+
+                const vertexMap = new Map();
+                let nextIndex = 0;
+
+                for (let j = startIndex; j < endIndex; j++) {
+                    const originalIndex = indices.get(j);
+
+                    if (!vertexMap.has(originalIndex)) {
+                        const vert = vertices.get(originalIndex);
+                        const x = vert[0];
+                        const y = vert[1];
+                        const z = vert[2];
+
+                        if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                            hasNaN = true;
+                            objVerticesList.push(0, 0, 0);
+                        } else {
+                            objVerticesList.push(x, z, -y); // Z-up to Y-up
+                        }
+                        vertexMap.set(originalIndex, nextIndex++);
+                    }
+                    objIndicesList.push(vertexMap.get(originalIndex));
+                }
+
+                if (hasNaN) {
+                    console.warn(`[RoadObjects 메쉬] 데이터에 NaN 값이 포함되어 있어 0으로 대체했습니다. 일부 모델이 잘못 보일 수 있습니다.`);
+                }
+
+                if (objVerticesList.length > 0) {
+                    const objVertices = new Float32Array(objVerticesList);
+                    geometry.setAttribute('position', new THREE.BufferAttribute(objVertices, 3));
+                    geometry.setIndex(objIndicesList);
+                    geometry.computeVertexNormals();
+
+                    const mesh = new THREE.Mesh(geometry, material.clone());
+                    mesh.userData = { id: `RoadObject-${i}`, type: '도로 시설물' };
+                    roadObjectsGroup.add(mesh);
+                }
+            }
+        }
+
+        function setupLayerControls() {
+            const controlsMap = {
+                'show-lanes': lanesGroup,
+                'show-roadmarks': roadmarksGroup,
+                'show-road-objects': roadObjectsGroup,
+                'show-origin': originMarker,
+                'show-original-origin': originalOriginMarker,
+                'show-axes': coordinateAxes,
+            };
+
+            for (const [id, group] of Object.entries(controlsMap)) {
+                const checkbox = document.getElementById(id);
+                if (checkbox) {
+                    checkbox.removeEventListener('change', onLayerToggle);
+                    checkbox.addEventListener('change', onLayerToggle);
+                    if (group) {
+                       group.visible = checkbox.checked;
+                    }
+                }
+            }
+        }
+        
+        function onLayerToggle(e) {
+            const groups = {
+                'show-lanes': lanesGroup,
+                'show-roadmarks': roadmarksGroup,
+                'show-road-objects': roadObjectsGroup,
+                'show-origin': originMarker,
+                'show-original-origin': originalOriginMarker,
+                'show-axes': coordinateAxes,
+            };
+            const group = groups[e.target.id];
+            if (group) {
+                group.visible = e.target.checked;
+                // 🎯 원점과 좌표축에 대한 특별한 로깅 (커서 룰: 사용자 경험)
+                if (e.target.id === 'show-origin') {
+                    console.log(`🎯 중심점 마커 ${e.target.checked ? '표시' : '숨김'}: center_map으로 인한 중심점`);
+                } else if (e.target.id === 'show-original-origin') {
+                    console.log(`🎯 실제 원점 마커 ${e.target.checked ? '표시' : '숨김'}: OpenDRIVE (0,0) 위치`);
+                    if (e.target.checked && window.mapAnalysis) {
+                        console.log(`  위치: ${window.mapAnalysis.quadrant}`);
+                    }
+                } else if (e.target.id === 'show-axes') {
+                    console.log(`🎯 좌표축 ${e.target.checked ? '표시' : '숨김'}: X(빨강/동쪽), Y(초록/북쪽), Z(파랑/위쪽)`);
+                }
+            }
+        }
+
+        function updateCameraAndGrid(meshes) {
+            if (meshes.length === 0) return;
+
+            const boundingBox = new THREE.Box3();
+            meshes.forEach(mesh => {
+                if (mesh && mesh.geometry) {
+                    mesh.geometry.computeBoundingBox();
+                    const meshBoundingBox = mesh.geometry.boundingBox;
+                    if (meshBoundingBox && !meshBoundingBox.isEmpty()) {
+                        boundingBox.union(mesh.geometry.boundingBox);
+                    }
+                }
+            });
+
+            if (boundingBox.isEmpty()) {
+                console.warn("경계 상자(BoundingBox)를 계산할 수 없습니다.");
+                return;
+            }
+
+            const center = new THREE.Vector3();
+            boundingBox.getCenter(center);
+            const size = new THREE.Vector3();
+            boundingBox.getSize(size);
+
+            const maxSize = Math.max(size.x, size.y, size.z);
+            const fitHeightDistance = maxSize / (2 * Math.atan(Math.PI * camera.fov / 360));
+            const fitWidthDistance = fitHeightDistance / camera.aspect;
+            const distance = 1.5 * Math.max(fitHeightDistance, fitWidthDistance);
+
+            const direction = controls.target.clone().sub(camera.position).normalize().multiplyScalar(distance);
+
+            controls.maxDistance = distance * 10;
+            controls.target.copy(center);
+            camera.position.copy(center).sub(direction);
+            camera.near = distance / 100;
+            camera.far = distance * 100;
+            camera.updateProjectionMatrix();
+
+            // 그리드 헬퍼 업데이트
+            scene.remove(gridHelper);
+            // 맵 크기보다 크면서 가장 가까운 100의 배수로 그리드 크기를 정함
+            const gridSize = Math.ceil(Math.max(size.x, size.z) / 100) * 100;
+            const divisions = gridSize / 100; // 각 칸이 100x100이 되도록 분할
+            gridHelper = new THREE.GridHelper(gridSize, divisions, 0x888888, 0x444444);
+            gridHelper.position.y = boundingBox.min.y; // 그리드를 객체들 아래에 위치
+            scene.add(gridHelper);
+        }
+
+        // 📋 **포괄적 디버그 데이터 표시 함수** (커서 룰: 단일 책임 원칙 적용)
+        function displayDebugData(map, roadNetworkMesh) {
+            const outputEl = document.getElementById('debug-output');
+            if (!outputEl) {
+                console.error("디버그 출력 요소를 찾을 수 없습니다!");
+                return;
+            }
+
+            try {
+                if (!map || !roadNetworkMesh) {
+                    outputEl.textContent = "오류: 맵 또는 메쉬 데이터가 유효하지 않습니다.";
+                    return;
+                }
+
+                let fullOutput = "";
+                
+                // 🎯 1. OpenDriveMap 기본 정보
+                fullOutput += generateMapBasicInfo(map);
+                
+                // 🎯 2. 전역 함수 결과
+                fullOutput += generateGlobalFunctionResults(map);
+                
+                // 🎯 3. RoadNetworkMesh 상세 분석
+                fullOutput += generateRoadNetworkMeshAnalysis(roadNetworkMesh);
+                
+                // 🎯 4. 도로별 상세 정보
+                fullOutput += generateRoadDetailedInfo(map);
+                
+                // 🎯 5. 교차로 정보
+                fullOutput += generateJunctionInfo(map);
+                
+                // 🎯 6. 메쉬 지오메트리 데이터
+                fullOutput += generateMeshGeometryData(roadNetworkMesh);
+                
+                // 🎯 7. 참조선 데이터
+                fullOutput += generateReflineData(map);
+                
+                // 🎯 8. 맵 위치 분석 결과
+                fullOutput += generateMapLocationAnalysis();
+                
+                outputEl.textContent = fullOutput;
+
+            } catch (e) {
+                console.error("displayDebugData 함수 실행 중 오류 발생:", e);
+                outputEl.textContent = "디버그 정보를 생성하는 중 오류가 발생했습니다:\n" + e.stack;
+            }
+        }
+
+        // 🎯 **1. OpenDriveMap 기본 정보 추출** (커서 룰: 데이터 캡슐화)
+        function generateMapBasicInfo(map) {
+            let output = "=".repeat(60) + "\n";
+            output += "📍 OpenDRIVE Map 기본 정보\n";
+            output += "=".repeat(60) + "\n";
+            
+            output += `파일명: ${map.xodr_file || 'N/A'}\n`;
+            output += `좌표계 (PROJ4): ${map.proj4 || 'None'}\n`;
+            output += `X 좌표 오프셋: ${(map.x_offs ?? 0).toFixed(6)}\n`;
+            output += `Y 좌표 오프셋: ${(map.y_offs ?? 0).toFixed(6)}\n`;
+            output += "\n";
+            
+            return output;
+        }
+
+        // 🎯 **2. 전역 함수 결과 추출** (커서 룰: 독립적 배포 가능성)
+        function generateGlobalFunctionResults(map) {
+            let output = "=".repeat(60) + "\n";
+            output += "🌐 전역 함수 결과\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                // Roads 데이터
+                const roads = Module.get_roads(map);
+                output += `총 도로 수: ${roads?.size() ?? 'N/A'}\n`;
+                
+                // Junctions 데이터
+                const junctions = Module.get_junctions(map);
+                output += `총 교차로 수: ${junctions?.size() ?? 'N/A'}\n`;
+                
+                // Refline Segments 데이터
+                const reflineSegments = Module.get_refline_segments(map, 0.25);
+                output += `참조선 정점 수: ${reflineSegments?.vertices?.size() ?? 'N/A'}\n`;
+                output += `참조선 인덱스 수: ${reflineSegments?.indices?.size() ?? 'N/A'}\n`;
+                
+            } catch (e) {
+                output += `전역 함수 호출 오류: ${e.message}\n`;
+            }
+            
+            output += "\n";
+            return output;
+        }
+
+        // 🎯 **3. RoadNetworkMesh 상세 분석** (커서 룰: 시스템 사고)
+        function generateRoadNetworkMeshAnalysis(roadNetworkMesh) {
+            let output = "=".repeat(60) + "\n";
+            output += "🏗️ RoadNetworkMesh 상세 분석\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                // LanesMesh 분석
+                const lanesMesh = roadNetworkMesh.lanes_mesh;
+                if (lanesMesh) {
+                    output += "--- 차선 메쉬 (LanesMesh) ---\n";
+                    output += `차선 수: ${lanesMesh.lane_start_indices?.size() ?? 0}\n`;
+                    output += `차선섹션 수: ${lanesMesh.lanesec_start_indices?.size() ?? 0}\n`;
+                    output += `도로 수: ${lanesMesh.road_start_indices?.size() ?? 0}\n`;
+                    output += `총 정점 수: ${lanesMesh.vertices?.size() ?? 0}\n`;
+                    output += `총 인덱스 수: ${lanesMesh.indices?.size() ?? 0}\n`;
+                    output += `법선 벡터 수: ${lanesMesh.normals?.size() ?? 0}\n`;
+                    output += `ST 좌표 수: ${lanesMesh.st_coordinates?.size() ?? 0}\n`;
+                    
+                    // 첫 번째 차선 상세 정보
+                    if (lanesMesh.lane_start_indices?.size() > 0) {
+                        const firstLaneIdx = lanesMesh.lane_start_indices.get(0);
+                        output += `\n첫 번째 차선 정보:\n`;
+                        output += `  - 차선 ID: ${lanesMesh.get_lane_id(firstLaneIdx)}\n`;
+                        output += `  - 도로 ID: ${lanesMesh.get_road_id(firstLaneIdx)}\n`;
+                        output += `  - 차선섹션 S0: ${lanesMesh.get_lanesec_s0(firstLaneIdx)?.toFixed(3)}\n`;
+                        
+                        const laneInterval = lanesMesh.get_idx_interval_lane(firstLaneIdx);
+                        output += `  - 정점 인덱스 구간: [${laneInterval[0]}, ${laneInterval[1]})\n`;
+                        output += `  - 정점 개수: ${laneInterval[1] - laneInterval[0]}\n`;
+                    }
+                }
+                
+                // RoadmarksMesh 분석
+                const roadmarksMesh = roadNetworkMesh.roadmarks_mesh;
+                if (roadmarksMesh) {
+                    output += "\n--- 도로표시 메쉬 (RoadmarksMesh) ---\n";
+                    output += `도로표시 타입 수: ${roadmarksMesh.roadmark_type_start_indices?.size() ?? 0}\n`;
+                    output += `총 정점 수: ${roadmarksMesh.vertices?.size() ?? 0}\n`;
+                    output += `총 인덱스 수: ${roadmarksMesh.indices?.size() ?? 0}\n`;
+                    
+                    // 첫 번째 도로표시 상세 정보
+                    if (roadmarksMesh.roadmark_type_start_indices?.size() > 0) {
+                        const firstRoadmarkIdx = roadmarksMesh.roadmark_type_start_indices.get(0);
+                        output += `\n첫 번째 도로표시 정보:\n`;
+                        output += `  - 도로표시 타입: ${roadmarksMesh.get_roadmark_type(firstRoadmarkIdx)}\n`;
+                        output += `  - 도로 ID: ${roadmarksMesh.get_road_id(firstRoadmarkIdx)}\n`;
+                        
+                        const roadmarkInterval = roadmarksMesh.get_idx_interval_roadmark(firstRoadmarkIdx);
+                        output += `  - 정점 인덱스 구간: [${roadmarkInterval[0]}, ${roadmarkInterval[1]})\n`;
+                    }
+                }
+                
+                // RoadObjectsMesh 분석
+                const roadObjectsMesh = roadNetworkMesh.road_objects_mesh;
+                if (roadObjectsMesh) {
+                    output += "\n--- 도로시설물 메쉬 (RoadObjectsMesh) ---\n";
+                    output += `도로시설물 수: ${roadObjectsMesh.road_object_start_indices?.size() ?? 0}\n`;
+                    output += `총 정점 수: ${roadObjectsMesh.vertices?.size() ?? 0}\n`;
+                    output += `총 인덱스 수: ${roadObjectsMesh.indices?.size() ?? 0}\n`;
+                    
+                    // 첫 번째 도로시설물 상세 정보
+                    if (roadObjectsMesh.road_object_start_indices?.size() > 0) {
+                        const firstObjectIdx = roadObjectsMesh.road_object_start_indices.get(0);
+                        output += `\n첫 번째 도로시설물 정보:\n`;
+                        output += `  - 시설물 ID: ${roadObjectsMesh.get_road_object_id(firstObjectIdx)}\n`;
+                        output += `  - 도로 ID: ${roadObjectsMesh.get_road_id(firstObjectIdx)}\n`;
+                        
+                        const objectInterval = roadObjectsMesh.get_idx_interval_road_object(firstObjectIdx);
+                        output += `  - 정점 인덱스 구간: [${objectInterval[0]}, ${objectInterval[1]})\n`;
+                    }
+                }
+                
+            } catch (e) {
+                output += `RoadNetworkMesh 분석 오류: ${e.message}\n`;
+            }
+            
+            output += "\n";
+            return output;
+        }
+
+        // 🎯 **4. 도로별 상세 정보** (커서 룰: 느슨한 결합)
+        function generateRoadDetailedInfo(map) {
+            let output = "=".repeat(60) + "\n";
+            output += "🛣️ 도로별 상세 정보\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                const roads = Module.get_roads(map);
+                if (roads && roads.size() > 0) {
+                    const maxRoadsToShow = Math.min(5, roads.size());
+                    output += `총 ${roads.size()}개 도로 중 첫 ${maxRoadsToShow}개 표시:\n\n`;
+                    
+                    for (let i = 0; i < maxRoadsToShow; i++) {
+                        const road = roads.get(i);
+                        output += `도로 #${i + 1}:\n`;
+                        output += `  - ID: ${road.id}\n`;
+                        output += `  - 길이: ${road.length?.toFixed(3) ?? 'N/A'}m\n`;
+                        output += `  - 이름: ${road.name || 'Unnamed'}\n`;
+                        output += `  - 교차로: ${road.junction || 'None'}\n`;
+                        output += "\n";
+                    }
+                    
+                    if (roads.size() > maxRoadsToShow) {
+                        output += `... 및 ${roads.size() - maxRoadsToShow}개 추가 도로\n\n`;
+                    }
+                } else {
+                    output += "도로 데이터 없음\n\n";
+                }
+            } catch (e) {
+                output += `도로 정보 추출 오류: ${e.message}\n\n`;
+            }
+            
+            return output;
+        }
+
+        // 🎯 **5. 교차로 정보** (커서 룰: 모듈화된 코드)
+        function generateJunctionInfo(map) {
+            let output = "=".repeat(60) + "\n";
+            output += "🚦 교차로 정보\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                const junctions = Module.get_junctions(map);
+                if (junctions && junctions.size() > 0) {
+                    const maxJunctionsToShow = Math.min(3, junctions.size());
+                    output += `총 ${junctions.size()}개 교차로 중 첫 ${maxJunctionsToShow}개 표시:\n\n`;
+                    
+                    for (let i = 0; i < maxJunctionsToShow; i++) {
+                        const junction = junctions.get(i);
+                        output += `교차로 #${i + 1}:\n`;
+                        output += `  - ID: ${junction.id}\n`;
+                        output += `  - 이름: ${junction.name || 'Unnamed'}\n`;
+                        output += "\n";
+                    }
+                    
+                    if (junctions.size() > maxJunctionsToShow) {
+                        output += `... 및 ${junctions.size() - maxJunctionsToShow}개 추가 교차로\n\n`;
+                    }
+                } else {
+                    output += "교차로 데이터 없음\n\n";
+                }
+            } catch (e) {
+                output += `교차로 정보 추출 오류: ${e.message}\n\n`;
+            }
+            
+            return output;
+        }
+
+        // 🎯 **6. 메쉬 지오메트리 데이터** (커서 룰: 성능 최적화)
+        function generateMeshGeometryData(roadNetworkMesh) {
+            let output = "=".repeat(60) + "\n";
+            output += "📐 메쉬 지오메트리 데이터 (샘플)\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                const lanesMesh = roadNetworkMesh.lanes_mesh;
+                if (lanesMesh && lanesMesh.vertices && lanesMesh.vertices.size() > 0) {
+                    const vertices = lanesMesh.vertices;
+                    const indices = lanesMesh.indices;
+                    
+                    output += "--- 정점 데이터 (첫 10개) ---\n";
+                    const maxVertices = Math.min(10, vertices.size());
+                    for (let i = 0; i < maxVertices; i++) {
+                        const vertex = vertices.get(i);
+                        output += `V${i}: (${vertex[0].toFixed(3)}, ${vertex[1].toFixed(3)}, ${vertex[2].toFixed(3)})\n`;
+                    }
+                    
+                    output += "\n--- 인덱스 데이터 (첫 30개, 삼각형별) ---\n";
+                    const maxIndices = Math.min(30, indices.size());
+                    for (let i = 0; i < maxIndices; i += 3) {
+                        if (i + 2 < maxIndices) {
+                            const i1 = indices.get(i);
+                            const i2 = indices.get(i + 1);
+                            const i3 = indices.get(i + 2);
+                            output += `T${Math.floor(i/3)}: [${i1}, ${i2}, ${i3}]\n`;
+                        }
+                    }
+                    
+                    // ST 좌표 시스템 정보
+                    if (lanesMesh.st_coordinates && lanesMesh.st_coordinates.size() > 0) {
+                        output += "\n--- ST 좌표 데이터 (첫 5개) ---\n";
+                        const maxST = Math.min(5, lanesMesh.st_coordinates.size());
+                        for (let i = 0; i < maxST; i++) {
+                            const st = lanesMesh.st_coordinates.get(i);
+                            output += `ST${i}: S=${st[0].toFixed(3)}, T=${st[1].toFixed(3)}\n`;
+                        }
+                    }
+                    
+                    // OBJ 파일 형식 정보
+                    output += "\n--- OBJ 파일 생성 가능 ---\n";
+                    output += `사용법: mesh.get_obj() 호출\n`;
+                    output += `데이터 크기: ${lanesMesh.vertices.size()} 정점, ${lanesMesh.indices.size()} 인덱스\n`;
+                }
+                
+            } catch (e) {
+                output += `지오메트리 데이터 추출 오류: ${e.message}\n`;
+            }
+            
+            output += "\n";
+            return output;
+        }
+
+        // 🎯 **7. 참조선 데이터** (커서 룰: 비용-혜택 분석)
+        function generateReflineData(map) {
+            let output = "=".repeat(60) + "\n";
+            output += "📏 참조선 (Refline) 데이터\n";
+            output += "=".repeat(60) + "\n";
+            
+            try {
+                const reflineSegments = Module.get_refline_segments(map, 0.25);
+                if (reflineSegments) {
+                    output += `참조선 정점 수: ${reflineSegments.vertices?.size() ?? 0}\n`;
+                    output += `참조선 인덱스 수: ${reflineSegments.indices?.size() ?? 0}\n`;
+                    
+                    if (reflineSegments.vertices && reflineSegments.vertices.size() > 0) {
+                        output += "\n--- 참조선 정점 (첫 10개) ---\n";
+                        const maxRefVertices = Math.min(10, reflineSegments.vertices.size());
+                        for (let i = 0; i < maxRefVertices; i++) {
+                            const vertex = reflineSegments.vertices.get(i);
+                            output += `R${i}: (${vertex[0].toFixed(3)}, ${vertex[1].toFixed(3)}, ${vertex[2].toFixed(3)})\n`;
+                        }
+                    }
+                    
+                    if (reflineSegments.indices && reflineSegments.indices.size() > 0) {
+                        output += "\n--- 참조선 인덱스 (첫 20개, 선분별) ---\n";
+                        const maxRefIndices = Math.min(20, reflineSegments.indices.size());
+                        for (let i = 0; i < maxRefIndices; i += 2) {
+                            if (i + 1 < maxRefIndices) {
+                                const i1 = reflineSegments.indices.get(i);
+                                const i2 = reflineSegments.indices.get(i + 1);
+                                output += `L${Math.floor(i/2)}: [${i1}, ${i2}]\n`;
+                            }
+                        }
+                    }
+                }
+                
+            } catch (e) {
+                output += `참조선 데이터 추출 오류: ${e.message}\n`;
+            }
+            
+            output += "\n";
+            return output;
+        }
+
+        // 🎯 **8. 맵 위치 분석 결과** (커서 룰: 실용적 정보 제공)
+        function generateMapLocationAnalysis() {
+            let output = "=".repeat(60) + "\n";
+            output += "🗺️ 맵 위치 분석 결과\n";
+            output += "=".repeat(60) + "\n";
+            
+            if (window.mapAnalysis) {
+                const analysis = window.mapAnalysis;
+                const bounds = analysis.bounds;
+                const realOrigin = analysis.realOrigin;
+                
+                output += `맵 경계 (Three.js 좌표계):\n`;
+                output += `  X축: ${bounds.min.x.toFixed(2)} ~ ${bounds.max.x.toFixed(2)} (폭: ${(bounds.max.x - bounds.min.x).toFixed(2)})\n`;
+                output += `  Z축: ${bounds.min.z.toFixed(2)} ~ ${bounds.max.z.toFixed(2)} (높이: ${(bounds.max.z - bounds.min.z).toFixed(2)})\n`;
+                output += `\n`;
+                
+                output += `맵 중심점 (center_map=true):\n`;
+                output += `  위치: (${bounds.center.x.toFixed(2)}, ${bounds.center.z.toFixed(2)})\n`;
+                output += `  표시색: 빨간색 구체\n`;
+                output += `\n`;
+                
+                output += `실제 OpenDRIVE 원점 (0,0):\n`;
+                output += `  OpenDRIVE 좌표: (0, 0)\n`;
+                output += `  Three.js 좌표: (${realOrigin.x.toFixed(2)}, ${realOrigin.z.toFixed(2)})\n`;
+                output += `  위치: ${analysis.quadrant}\n`;
+                output += `  표시색: 주황색 다이아몬드\n`;
+                output += `\n`;
+                
+                // 사분면 설명
+                output += `사분면 분석 (맵 중심 기준):\n`;
+                if (analysis.quadrant.includes('1사분면')) {
+                    output += `  실제 원점이 맵의 우상단 영역에 위치\n`;
+                } else if (analysis.quadrant.includes('2사분면')) {
+                    output += `  실제 원점이 맵의 좌상단 영역에 위치\n`;
+                } else if (analysis.quadrant.includes('3사분면')) {
+                    output += `  실제 원점이 맵의 좌하단 영역에 위치\n`;
+                } else if (analysis.quadrant.includes('4사분면')) {
+                    output += `  실제 원점이 맵의 우하단 영역에 위치\n`;
+                } else if (analysis.quadrant.includes('외부')) {
+                    output += `  실제 원점이 맵 영역 밖에 위치\n`;
+                    output += `  이는 center_map=true로 인해 맵이 중심으로 이동했기 때문\n`;
+                }
+                
+                output += `\n`;
+                output += `좌표 오프셋 정보:\n`;
+                output += `  X 오프셋: ${window.mapOffsetX?.toFixed(6) || 'N/A'}\n`;
+                output += `  Y 오프셋: ${window.mapOffsetY?.toFixed(6) || 'N/A'}\n`;
+                output += `  이 오프셋은 실제 지리적 좌표로의 변환에 사용됨\n`;
+                
+            } else {
+                output += "맵 분석 데이터가 아직 준비되지 않았습니다.\n";
+                output += "잠시 후 다시 확인해주세요.\n";
+            }
+            
+            output += "\n";
+            output += "=".repeat(60) + "\n";
+            output += "✅ 모든 libOpenDRIVE 데이터 추출 완료\n";
+            output += "=".repeat(60) + "\n";
+            
+            return output;
+        }
+
+        /**
+         * 사용자에게 피드백 메시지를 표시하는 헬퍼 함수
+         * @param {string} message - 표시할 메시지
+         * @param {string} type - 'success' 또는 'error'
+         */
+        function showFeedbackMessage(message, type = 'success') {
+            const feedbackDiv = document.createElement('div');
+            feedbackDiv.className = `message-popup ${type}-message`;
+            feedbackDiv.textContent = message;
+            document.body.appendChild(feedbackDiv);
+
+            setTimeout(() => {
+                feedbackDiv.style.transition = 'opacity 0.5s';
+                feedbackDiv.style.opacity = '0';
+                setTimeout(() => {
+                    document.body.removeChild(feedbackDiv);
+                }, 500);
+            }, 3000); // 3초 후 사라짐
+        }
+        function showSuccess(message) {
+            showFeedbackMessage(message, 'success');
+        }
+        function showError(message) {
+            showFeedbackMessage(message, 'error');
+        }
+
+        // 'W' 키를 눌러 와이어프레임 모드 토글
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'w' || event.key === 'W') {
+                const materials = [
+                    lanesGroup, roadmarksGroup, roadObjectsGroup
+                ].flatMap(group => group ? group.children : [])
+                 .map(child => child.material);
+
+                materials.forEach(material => {
+                    if (material) {
+                         material.wireframe = !material.wireframe;
+                    }
+                });
+            }
+            if (event.key === 'h' || event.key === 'H') {
+                document.getElementById('controls')?.classList.toggle('hidden');
+            }
+        });
+
+        // 🎯 **중심점 마커 생성 함수** (커서 룰: 단일 책임 원칙)
+        function createOriginMarker() {
+            if (originMarker) {
+                scene.remove(originMarker);
+                originMarker.geometry.dispose();
+                originMarker.material.dispose();
+            }
+
+            // 중심점에 구체 마커 생성 (빨간색)
+            const originGeometry = new THREE.SphereGeometry(5, 16, 16);
+            const originMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xff0000,
+                emissive: 0x330000,
+                roughness: 0.3,
+                metalness: 0.1
+            });
+            
+            originMarker = new THREE.Mesh(originGeometry, originMaterial);
+            
+            // center_map: true로 인한 중심점 위치
+            originMarker.position.set(0, 0, 0);
+            originMarker.userData = { 
+                type: '맵 중심점 (center_map)',
+                id: 'center-marker',
+                isOrigin: true
+            };
+            
+            scene.add(originMarker);
+            console.log('중심점 마커 생성 완료: (0, 0, 0)');
+        }
+
+        // 🎯 **실제 OpenDRIVE 원점 마커 생성** (커서 룰: 데이터 정확성)
+        function createOriginalOriginMarker() {
+            if (originalOriginMarker) {
+                scene.remove(originalOriginMarker);
+                originalOriginMarker.geometry.dispose();
+                originalOriginMarker.material.dispose();
+            }
+
+            // 실제 원점 위치 계산
+            const realOriginX = -window.mapOffsetX || 0;
+            const realOriginZ = -window.mapOffsetY || 0; // OpenDRIVE Y -> Three.js Z
+            
+            // 실제 원점에 다이아몬드 마커 생성 (주황색)
+            const diamondGeometry = new THREE.OctahedronGeometry(8, 0);
+            const diamondMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xff6600,
+                emissive: 0x441100,
+                roughness: 0.2,
+                metalness: 0.2
+            });
+            
+            originalOriginMarker = new THREE.Mesh(diamondGeometry, diamondMaterial);
+            originalOriginMarker.position.set(realOriginX, 0, realOriginZ);
+            originalOriginMarker.userData = { 
+                type: '실제 OpenDRIVE 원점 (0,0)',
+                id: 'real-origin-marker',
+                isRealOrigin: true,
+                realCoords: { x: 0, y: 0 }
+            };
+            
+            scene.add(originalOriginMarker);
+            console.log(`실제 원점 마커 생성 완료: OpenDRIVE (0,0) -> Three.js (${realOriginX.toFixed(2)}, ${realOriginZ.toFixed(2)})`);
+            
+            // 맵 분석 정보 출력
+            analyzeMapBounds();
+        }
+
+        // 🎯 **맵 경계 분석 함수** (커서 룰: 시스템 사고)
+        function analyzeMapBounds() {
+            if (!lanesGroup || lanesGroup.children.length === 0) return;
+            
+            const boundingBox = new THREE.Box3();
+            lanesGroup.children.forEach(mesh => {
+                if (mesh && mesh.geometry) {
+                    mesh.geometry.computeBoundingBox();
+                    if (mesh.geometry.boundingBox && !mesh.geometry.boundingBox.isEmpty()) {
+                        boundingBox.union(mesh.geometry.boundingBox);
+                    }
+                }
+            });
+            
+            if (boundingBox.isEmpty()) return;
+            
+            const min = boundingBox.min;
+            const max = boundingBox.max;
+            const center = new THREE.Vector3();
+            boundingBox.getCenter(center);
+            
+            // 실제 원점 위치
+            const realOriginX = -window.mapOffsetX || 0;
+            const realOriginZ = -window.mapOffsetY || 0;
+            
+            // 사분면 분석
+            let quadrant = '';
+            if (realOriginX >= min.x && realOriginX <= max.x && realOriginZ >= min.z && realOriginZ <= max.z) {
+                // 원점이 맵 내부에 있는 경우
+                const centerX = center.x;
+                const centerZ = center.z;
+                
+                if (realOriginX >= centerX && realOriginZ >= centerZ) quadrant = '1사분면 (우상단)';
+                else if (realOriginX < centerX && realOriginZ >= centerZ) quadrant = '2사분면 (좌상단)';
+                else if (realOriginX < centerX && realOriginZ < centerZ) quadrant = '3사분면 (좌하단)';
+                else quadrant = '4사분면 (우하단)';
+            } else {
+                // 원점이 맵 외부에 있는 경우
+                if (realOriginX > max.x && realOriginZ > max.z) quadrant = '맵 우상단 외부';
+                else if (realOriginX < min.x && realOriginZ > max.z) quadrant = '맵 좌상단 외부';
+                else if (realOriginX < min.x && realOriginZ < min.z) quadrant = '맵 좌하단 외부';
+                else if (realOriginX > max.x && realOriginZ < min.z) quadrant = '맵 우하단 외부';
+                else if (realOriginX >= min.x && realOriginX <= max.x && realOriginZ > max.z) quadrant = '맵 상단 외부';
+                else if (realOriginX >= min.x && realOriginX <= max.x && realOriginZ < min.z) quadrant = '맵 하단 외부';
+                else if (realOriginX > max.x && realOriginZ >= min.z && realOriginZ <= max.z) quadrant = '맵 우측 외부';
+                else if (realOriginX < min.x && realOriginZ >= min.z && realOriginZ <= max.z) quadrant = '맵 좌측 외부';
+            }
+            
+            console.log('🗺️ 맵 분석 결과:');
+            console.log(`  맵 경계: X(${min.x.toFixed(2)} ~ ${max.x.toFixed(2)}), Z(${min.z.toFixed(2)} ~ ${max.z.toFixed(2)})`);
+            console.log(`  맵 중심: (${center.x.toFixed(2)}, ${center.z.toFixed(2)})`);
+            console.log(`  실제 원점 위치: (${realOriginX.toFixed(2)}, ${realOriginZ.toFixed(2)})`);
+            console.log(`  원점은 ${quadrant}에 위치`);
+            
+            // 전역 변수에 저장
+            window.mapAnalysis = {
+                bounds: { min, max, center },
+                realOrigin: { x: realOriginX, z: realOriginZ },
+                quadrant: quadrant
+            };
+        }
+
+        // 🎯 **좌표축 생성 함수** (커서 룰: 모듈화된 코드)
+        function createCoordinateAxes() {
+            if (coordinateAxes) {
+                scene.remove(coordinateAxes);
+                coordinateAxes.children.forEach(child => {
+                    child.geometry.dispose();
+                    child.material.dispose();
+                });
+            }
+
+            coordinateAxes = new THREE.Group();
+            coordinateAxes.name = "CoordinateAxes";
+
+            const axisLength = 50;
+            const axisWidth = 2;
+
+            // X축 (빨간색) - OpenDRIVE 동쪽 방향
+            const xAxisGeometry = new THREE.CylinderGeometry(axisWidth, axisWidth, axisLength, 8);
+            const xAxisMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const xAxis = new THREE.Mesh(xAxisGeometry, xAxisMaterial);
+            xAxis.position.set(axisLength / 2, 0, 0);
+            xAxis.rotation.z = -Math.PI / 2;
+            xAxis.userData = { type: 'X축 (동쪽)', axis: 'X' };
+
+            // Y축 (초록색) - OpenDRIVE 북쪽 방향 (Three.js Z축)
+            const yAxisGeometry = new THREE.CylinderGeometry(axisWidth, axisWidth, axisLength, 8);
+            const yAxisMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+            const yAxis = new THREE.Mesh(yAxisGeometry, yAxisMaterial);
+            yAxis.position.set(0, 0, axisLength / 2);
+            yAxis.rotation.x = Math.PI / 2;
+            yAxis.userData = { type: 'Y축 (북쪽)', axis: 'Y' };
+
+            // Z축 (파란색) - OpenDRIVE 위쪽 방향 (Three.js Y축)
+            const zAxisGeometry = new THREE.CylinderGeometry(axisWidth, axisWidth, axisLength, 8);
+            const zAxisMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+            const zAxis = new THREE.Mesh(zAxisGeometry, zAxisMaterial);
+            zAxis.position.set(0, axisLength / 2, 0);
+            zAxis.userData = { type: 'Z축 (위쪽)', axis: 'Z' };
+
+            // 축 끝에 화살표 추가
+            const arrowSize = 8;
+            
+            // X축 화살표
+            const xArrowGeometry = new THREE.ConeGeometry(arrowSize, arrowSize * 2, 8);
+            const xArrow = new THREE.Mesh(xArrowGeometry, xAxisMaterial);
+            xArrow.position.set(axisLength, 0, 0);
+            xArrow.rotation.z = -Math.PI / 2;
+
+            // Y축 화살표
+            const yArrow = new THREE.Mesh(xArrowGeometry, yAxisMaterial);
+            yArrow.position.set(0, 0, axisLength);
+            yArrow.rotation.x = Math.PI / 2;
+
+            // Z축 화살표
+            const zArrow = new THREE.Mesh(xArrowGeometry, zAxisMaterial);
+            zArrow.position.set(0, axisLength, 0);
+
+            coordinateAxes.add(xAxis, yAxis, zAxis, xArrow, yArrow, zArrow);
+            coordinateAxes.userData = { type: '좌표축', id: 'coordinate-axes' };
+            
+            scene.add(coordinateAxes);
+            console.log('좌표축 생성 완료: X(빨강/동쪽), Y(초록/북쪽), Z(파랑/위쪽)');
+        }
+
+        function clearScene() {
+            if (lanesGroup) scene.remove(lanesGroup);
+            if (roadmarksGroup) scene.remove(roadmarksGroup);
+            if (roadObjectsGroup) scene.remove(roadObjectsGroup);
+            if (gridHelper) scene.remove(gridHelper);
+            if (originMarker) scene.remove(originMarker);
+            if (originalOriginMarker) scene.remove(originalOriginMarker);
+            if (coordinateAxes) scene.remove(coordinateAxes);
+
+            lanesGroup?.children.forEach(child => child.geometry.dispose());
+            roadmarksGroup?.children.forEach(child => child.geometry.dispose());
+            roadObjectsGroup?.children.forEach(child => child.geometry.dispose());
+            
+            // 원점 마커들 정리
+            if (originMarker) {
+                originMarker.geometry.dispose();
+                originMarker.material.dispose();
+            }
+            if (originalOriginMarker) {
+                originalOriginMarker.geometry.dispose();
+                originalOriginMarker.material.dispose();
+            }
+            
+            // 좌표축 정리
+            if (coordinateAxes) {
+                coordinateAxes.children.forEach(child => {
+                    child.geometry.dispose();
+                    child.material.dispose();
+                });
+            }
+        }
+
+        function onMouseClick(event) {
+            // ... 기존 코드 ...
+        }
+    </script>
+</body>
+</html> 
