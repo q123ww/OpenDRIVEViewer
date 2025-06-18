@@ -684,7 +684,12 @@
             laneMaterial.name = "Lanes";
             const roadmarkMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide });
             roadmarkMaterial.name = "Roadmarks";
-            const roadObjectMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+            const roadObjectMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xff4444, // 더 눈에 띄는 빨간색
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.8
+            });
             roadObjectMaterial.name = "RoadObjects";
 
             // 차선 메쉬
@@ -711,7 +716,20 @@
             
             // 도로 시설물 메쉬 (개별)
             if (roadNetworkMesh.road_objects_mesh && roadNetworkMesh.road_objects_mesh.road_object_start_indices) {
+                const objectCount = roadNetworkMesh.road_objects_mesh.road_object_start_indices.size();
+                console.log(`🚧 도로시설물 처리 시작: ${objectCount}개 객체 감지됨`);
                 createIndividualObjectMeshes(roadNetworkMesh.road_objects_mesh, roadNetworkMesh.road_objects_mesh.road_object_start_indices, roadObjectMaterial);
+                
+                // 생성된 시설물 개수 확인
+                const createdCount = roadObjectsGroup.children.length;
+                if (createdCount > 0) {
+                    showMessage(`✅ 도로시설물 ${createdCount}개가 생성되었습니다! (빨간색/노란색으로 표시)`, 'success');
+                } else if (objectCount > 0) {
+                    showMessage(`⚠️ 도로시설물 데이터는 있지만(${objectCount}개) 3D 모델 생성에 실패했습니다. 디버그 패널을 확인하세요.`, 'warning');
+                }
+            } else {
+                console.log("🚧 도로시설물 데이터가 없습니다.");
+                showMessage("ℹ️ 이 맵에는 도로시설물이 없습니다.", 'info');
             }
 
             // 원점과 좌표축 표시
@@ -785,16 +803,34 @@
 
         function createIndividualObjectMeshes(odrMesh, startIndices, material) {
             if (!odrMesh || odrMesh.vertices.size() === 0 || !startIndices) {
-                console.warn("도로 시설물 데이터(startIndices)가 없어 개별 객체를 생성할 수 없습니다.");
+                console.warn("🚧 도로 시설물 데이터가 없어 개별 객체를 생성할 수 없습니다.");
+                console.log("  - odrMesh:", !!odrMesh);
+                console.log("  - vertices:", odrMesh?.vertices?.size() ?? 0);
+                console.log("  - startIndices:", !!startIndices);
                 return;
             }
 
             const vertices = odrMesh.vertices;
             const indices = odrMesh.indices;
+            const totalObjects = startIndices.size();
+            
+            console.log(`🚧 도로시설물 생성 시작: ${totalObjects}개 객체 처리`);
+            console.log(`  - 총 정점: ${vertices.size()}`);
+            console.log(`  - 총 인덱스: ${indices.size()}`);
 
-            for (let i = 0; i < startIndices.size() - 1; i++) {
+            let createdObjects = 0;
+            let skippedObjects = 0;
+
+            for (let i = 0; i < totalObjects - 1; i++) {
                 const startIndex = startIndices.get(i);
                 const endIndex = startIndices.get(i + 1);
+                const indexCount = endIndex - startIndex;
+                
+                if (indexCount <= 0) {
+                    console.warn(`  객체 ${i}: 인덱스 개수가 0 이하 (${indexCount}), 건너뜀`);
+                    skippedObjects++;
+                    continue;
+                }
                 
                 const geometry = new THREE.BufferGeometry();
                 const objVerticesList = [];
@@ -825,18 +861,89 @@
                 }
 
                 if (hasNaN) {
-                    console.warn(`[RoadObjects 메쉬] 데이터에 NaN 값이 포함되어 있어 0으로 대체했습니다. 일부 모델이 잘못 보일 수 있습니다.`);
+                    console.warn(`  객체 ${i}: NaN 값 포함, 0으로 대체`);
                 }
 
-                if (objVerticesList.length > 0) {
+                if (objVerticesList.length > 0 && objIndicesList.length > 0) {
                     const objVertices = new Float32Array(objVerticesList);
                     geometry.setAttribute('position', new THREE.BufferAttribute(objVertices, 3));
                     geometry.setIndex(objIndicesList);
                     geometry.computeVertexNormals();
 
+                    // 바운딩 박스 계산으로 크기 확인
+                    geometry.computeBoundingBox();
+                    const box = geometry.boundingBox;
+                    const size = box.max.distanceTo(box.min);
+
                     const mesh = new THREE.Mesh(geometry, material.clone());
-                    mesh.userData = { id: `RoadObject-${i}`, type: '도로 시설물' };
+                    mesh.userData = { 
+                        id: `RoadObject-${i}`, 
+                        type: '도로 시설물',
+                        size: size.toFixed(3),
+                        vertices: objVerticesList.length / 3,
+                        indices: objIndicesList.length
+                    };
+                    
+                    // 작은 객체는 더 눈에 띄게 만들기
+                    if (size < 1.0) {
+                        mesh.material.color.setHex(0xffff00); // 노란색
+                        mesh.material.emissive.setHex(0x444400); // 발광 효과
+                    }
+                    
                     roadObjectsGroup.add(mesh);
+                    createdObjects++;
+                    
+                    console.log(`  객체 ${i}: 생성 완료 (크기: ${size.toFixed(3)}m, 정점: ${objVerticesList.length/3}, 인덱스: ${objIndicesList.length})`);
+                } else {
+                    console.warn(`  객체 ${i}: 빈 지오메트리, 건너뜀`);
+                    skippedObjects++;
+                }
+            }
+            
+            console.log(`🚧 도로시설물 생성 완료: ${createdObjects}개 생성, ${skippedObjects}개 건너뜀`);
+            
+            // 시설물이 하나도 생성되지 않았다면 대체 표시 생성
+            if (createdObjects === 0 && totalObjects > 0) {
+                console.warn("⚠️ 도로시설물이 하나도 생성되지 않았습니다. 대체 마커를 생성합니다.");
+                createFallbackRoadObjectMarkers(odrMesh, startIndices);
+            }
+        }
+
+        // 도로시설물이 표시되지 않을 때 대체 마커 생성
+        function createFallbackRoadObjectMarkers(odrMesh, startIndices) {
+            const vertices = odrMesh.vertices;
+            const totalObjects = startIndices.size();
+            
+            for (let i = 0; i < Math.min(totalObjects - 1, 10); i++) { // 최대 10개만
+                const startIndex = startIndices.get(i);
+                
+                if (startIndex < vertices.size()) {
+                    const vert = vertices.get(startIndex);
+                    const x = vert[0];
+                    const y = vert[1]; 
+                    const z = vert[2];
+                    
+                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                        // 구 형태의 마커 생성
+                        const geometry = new THREE.SphereGeometry(2.0, 8, 6);
+                        const material = new THREE.MeshStandardMaterial({ 
+                            color: 0xff0000,
+                            emissive: 0x440000,
+                            transparent: true,
+                            opacity: 0.8
+                        });
+                        
+                        const marker = new THREE.Mesh(geometry, material);
+                        marker.position.set(x, z, -y); // 좌표계 변환
+                        marker.userData = { 
+                            id: `FallbackMarker-${i}`, 
+                            type: '도로 시설물 마커',
+                            originalPosition: [x, y, z]
+                        };
+                        
+                        roadObjectsGroup.add(marker);
+                        console.log(`  대체 마커 ${i}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+                    }
                 }
             }
         }
@@ -1085,20 +1192,84 @@
                 const roadObjectsMesh = roadNetworkMesh.road_objects_mesh;
                 if (roadObjectsMesh) {
                     output += "\n--- 도로시설물 메쉬 (RoadObjectsMesh) ---\n";
-                    output += `도로시설물 수: ${roadObjectsMesh.road_object_start_indices?.size() ?? 0}\n`;
-                    output += `총 정점 수: ${roadObjectsMesh.vertices?.size() ?? 0}\n`;
-                    output += `총 인덱스 수: ${roadObjectsMesh.indices?.size() ?? 0}\n`;
+                    const objectCount = roadObjectsMesh.road_object_start_indices?.size() ?? 0;
+                    const vertexCount = roadObjectsMesh.vertices?.size() ?? 0;
+                    const indexCount = roadObjectsMesh.indices?.size() ?? 0;
                     
-                    // 첫 번째 도로시설물 상세 정보
-                    if (roadObjectsMesh.road_object_start_indices?.size() > 0) {
-                        const firstObjectIdx = roadObjectsMesh.road_object_start_indices.get(0);
-                        output += `\n첫 번째 도로시설물 정보:\n`;
-                        output += `  - 시설물 ID: ${roadObjectsMesh.get_road_object_id(firstObjectIdx)}\n`;
-                        output += `  - 도로 ID: ${roadObjectsMesh.get_road_id(firstObjectIdx)}\n`;
+                    output += `도로시설물 수: ${objectCount}\n`;
+                    output += `총 정점 수: ${vertexCount}\n`;
+                    output += `총 인덱스 수: ${indexCount}\n`;
+                    
+                    if (objectCount === 0) {
+                        output += `⚠️ 도로시설물이 없습니다. OpenDRIVE 파일에 <object> 태그가 없거나 with_road_objects=false일 수 있습니다.\n`;
+                    } else {
+                        output += `✅ 도로시설물 데이터 발견! 3D 뷰어에서 빨간색/노란색으로 표시됩니다.\n`;
                         
-                        const objectInterval = roadObjectsMesh.get_idx_interval_road_object(firstObjectIdx);
-                        output += `  - 정점 인덱스 구간: [${objectInterval[0]}, ${objectInterval[1]})\n`;
+                        // 첫 번째 도로시설물 상세 정보
+                        if (roadObjectsMesh.road_object_start_indices?.size() > 0) {
+                            try {
+                                const firstObjectIdx = roadObjectsMesh.road_object_start_indices.get(0);
+                                output += `\n첫 번째 도로시설물 정보:\n`;
+                                
+                                // ID 정보 (안전하게 시도)
+                                try {
+                                    const objectId = roadObjectsMesh.get_road_object_id ? roadObjectsMesh.get_road_object_id(firstObjectIdx) : 'N/A';
+                                    const roadId = roadObjectsMesh.get_road_id ? roadObjectsMesh.get_road_id(firstObjectIdx) : 'N/A';
+                                    output += `  - 시설물 ID: ${objectId}\n`;
+                                    output += `  - 도로 ID: ${roadId}\n`;
+                                } catch (e) {
+                                    output += `  - ID 정보 추출 실패: ${e.message}\n`;
+                                }
+                                
+                                // 인덱스 구간 정보
+                                try {
+                                    const objectInterval = roadObjectsMesh.get_idx_interval_road_object ? 
+                                        roadObjectsMesh.get_idx_interval_road_object(firstObjectIdx) : null;
+                                    if (objectInterval) {
+                                        output += `  - 정점 인덱스 구간: [${objectInterval[0]}, ${objectInterval[1]})\n`;
+                                        output += `  - 인덱스 개수: ${objectInterval[1] - objectInterval[0]}\n`;
+                                    }
+                                } catch (e) {
+                                    output += `  - 인덱스 구간 추출 실패: ${e.message}\n`;
+                                }
+                                
+                                // 첫 번째 정점 위치
+                                if (vertexCount > 0) {
+                                    try {
+                                        const firstVertex = roadObjectsMesh.vertices.get(0);
+                                        output += `  - 첫 번째 정점: (${firstVertex[0].toFixed(2)}, ${firstVertex[1].toFixed(2)}, ${firstVertex[2].toFixed(2)})\n`;
+                                    } catch (e) {
+                                        output += `  - 정점 정보 추출 실패: ${e.message}\n`;
+                                    }
+                                }
+                                
+                            } catch (e) {
+                                output += `도로시설물 상세 정보 추출 중 오류: ${e.message}\n`;
+                            }
+                        }
+                        
+                        // 전체 시설물 크기 분포 분석
+                        if (objectCount > 1) {
+                            output += `\n시설물 분포:\n`;
+                            const maxShow = Math.min(5, objectCount - 1);
+                            for (let i = 0; i < maxShow; i++) {
+                                try {
+                                    const startIdx = roadObjectsMesh.road_object_start_indices.get(i);
+                                    const endIdx = roadObjectsMesh.road_object_start_indices.get(i + 1);
+                                    const objIndexCount = endIdx - startIdx;
+                                    output += `  - 시설물 ${i}: ${objIndexCount}개 인덱스\n`;
+                                } catch (e) {
+                                    output += `  - 시설물 ${i}: 분석 실패\n`;
+                                }
+                            }
+                            if (objectCount > maxShow + 1) {
+                                output += `  ... 및 ${objectCount - maxShow - 1}개 추가 시설물\n`;
+                            }
+                        }
                     }
+                } else {
+                    output += "\n--- 도로시설물 메쉬 (RoadObjectsMesh) ---\n";
+                    output += "❌ 도로시설물 메쉬 데이터가 없습니다.\n";
                 }
                 
             } catch (e) {
